@@ -18,7 +18,7 @@
 
 import { onMounted, onUnmounted, ref, watch } from "vue";
 
-export type ParticleTheme = "deep" | "void" | "dawn" | "aurora";
+export type ParticleTheme = "deep" | "void" | "dawn" | "aurora" | "ember" | "paper";
 
 const props = withDefaults(
   defineProps<{
@@ -55,14 +55,17 @@ let ro: ResizeObserver | null = null;
 let w = 0;
 let h = 0;
 
-/** 四主题粒子色板（rgb 三元组）：与 glass.css 的 --dial-particle 同源。
+/** 六主题粒子色板（rgb 三元组）：与 glass.css 的 --dial-particle 同源。
  *  · deep 深空：靛蓝星光；void 虚空：银白提亮（纯黑底上要亮）；
- *  · dawn 晨雾：墨蓝压暗（浅底上亮色全灭）；aurora 极光：春绿同帷幕。 */
+ *  · dawn 晨雾：墨蓝压暗（浅底上亮色全灭）；aurora 极光：春绿同帷幕；
+ *  · ember 暮霞：暖橙同余烬；paper 纸墨：淡墨（浅底沉降尘）。 */
 const THEME_RGB: Record<ParticleTheme, string> = {
   deep: "168,182,255",
   void: "212,218,245",
   dawn: "86,112,168",
   aurora: "120,240,190",
+  ember: "255,178,122",
+  paper: "107,99,80",
 };
 
 /** 当前主题的粒子色，rgb 三元组字符串。 */

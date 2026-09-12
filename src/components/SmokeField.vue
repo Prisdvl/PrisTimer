@@ -6,7 +6,9 @@
 //   · 深空 deep：三条斜向光带扫过（流动的暗示）；
 //   · 虚空 void：烟几乎退场，换 90 颗闪烁星尘 + 偶发流星（GSAP 划过）；
 //   · 极光 aurora：三幅纵向光幕缓摆（极夜天穹）；
-//   · 晨雾 dawn：暖色光尘缓飘（日间的浮埃）。
+//   · 晨雾 dawn：暖色光尘缓飘（日间的浮埃）；
+//   · 暮霞 ember（第 21 轮）：余烬火星自下而上飘升明灭（MoteField up）；
+//   · 纸墨 paper（第 21 轮）：淡墨尘缓缓沉降（MoteField down）。
 //
 // ★ 主题切换的观感：颜色插值交给 glass.css 的 @property + :root transition
 //   （底色/烟色/墨色整体渐变 0.9s）；这里的特色层只做交叉淡入淡出，
@@ -19,8 +21,9 @@
 import { nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { gsap } from "gsap";
 import ParticleField from "./ParticleField.vue";
+import MoteField from "./MoteField.vue";
 
-export type BgTheme = "deep" | "void" | "dawn" | "aurora";
+export type BgTheme = "deep" | "void" | "dawn" | "aurora" | "ember" | "paper";
 
 const props = withDefaults(
   defineProps<{
@@ -313,6 +316,20 @@ onUnmounted(() => {
     <Transition name="layerfade">
       <div v-if="theme === 'dawn'" class="fx">
         <ParticleField :count="26" :speed="0.3" rgb="255,226,180" :alpha="0.85" />
+      </div>
+    </Transition>
+
+    <!-- 暮霞：余烬火星自下而上飘升明灭 -->
+    <Transition name="layerfade">
+      <div v-if="theme === 'ember'" class="fx">
+        <MoteField :count="24" dir="up" rgb="255,150,80" :speed="0.6" :alpha="0.9" />
+      </div>
+    </Transition>
+
+    <!-- 纸墨：淡墨尘缓缓沉降 -->
+    <Transition name="layerfade">
+      <div v-if="theme === 'paper'" class="fx">
+        <MoteField :count="26" dir="down" rgb="90,84,68" :speed="0.35" :alpha="0.8" />
       </div>
     </Transition>
 

@@ -246,7 +246,8 @@
     --hand-paused 0.9s var(--ease-in-out-soft),
     --hand-finished 0.9s var(--ease-in-out-soft),
     --tick 0.9s var(--ease-in-out-soft),
-    --tick-strong 0.9s var(--ease-in-out-soft);
+    --tick-strong 0.9s var(--ease-in-out-soft),
+    --sheen-c 0.9s var(--ease-in-out-soft);
 }
 
 /* ---------------------------------------------------------------- 主题集 */
@@ -291,8 +292,11 @@
   --glass-border: rgb(30 42 64 / 0.14);
   --glass-border-strong: rgb(30 42 64 / 0.26);
   --sheen-c: rgb(96 134 196 / 0.3);
-  --hand-idle: #5a6780;
-  --hand-rest: #3a4356;
+  /* 第 21 轮：浅底指针加深一档（老大实测反馈"启动后不易辨识"）——
+     idle 与 rest 都压到对浅玻璃 ≥6.5:1 对比，同时保住 idle 略浅于
+     rest 的"松开了"层级；暖墨色相跟随晨雾的墨蓝语系。 */
+  --hand-idle: #414d68;
+  --hand-rest: #2e3850;
   --hand-paused: #a9781f;
   --hand-finished: #2e6fc0;
   --tick: rgb(30 42 64 / 0.2);
@@ -317,6 +321,54 @@
   --tick: rgb(230 255 244 / 0.16);
   --tick-strong: rgb(230 255 244 / 0.34);
   --dial-particle: #78f0be;
+}
+
+/* 暮霞（第 21 轮）：黄昏的最后一段光——暖橙霞光沉入深棕紫的夜。
+   特色动效：余烬火星自下而上飘升、边升边熄（SmokeField 的 mote 层）。 */
+:root[data-theme="ember"] {
+  --smoke-a: #ff8a50;
+  --smoke-b: #d45a7a;
+  --smoke-c: #8a4a6e;
+  --smoke-d: #5a3a4e;
+  --bg-a: #1d100c;
+  --bg-b: #12080a;
+  --bg-c: #0a0406;
+  --hand-idle: #6e5a54;
+  --hand-rest: #9a857c;
+  --hand-paused: #e8b64c;
+  --hand-finished: #5aa7ff;
+  --tick: rgb(255 235 225 / 0.15);
+  --tick-strong: rgb(255 235 225 / 0.32);
+  --dial-particle: #ffb27a;
+}
+
+/* 纸墨（第 21 轮，浅色第二套）：宣纸米白 + 淡墨青灰，比晨雾更素净。
+   特色动效：淡墨尘缓缓沉降（mote 层向下），像纸页间浮尘落定。 */
+:root[data-theme="paper"] {
+  --smoke-a: #b0a890;
+  --smoke-b: #c8bca4;
+  --smoke-c: #9aa8a0;
+  --smoke-d: #cfc6b0;
+  --bg-a: #f4f1ea;
+  --bg-b: #eae5da;
+  --bg-c: #ded7c8;
+  --ink: #2a2723;
+  --ink-soft: #45403a;
+  --ink-dim: #6b6459;
+  --ink-faint: #948b7d;
+  --glass-bg: rgb(255 255 255 / 0.42);
+  --glass-bg-strong: rgb(255 255 255 / 0.6);
+  --glass-bg-deep: rgb(60 52 40 / 0.1);
+  --glass-border: rgb(64 56 44 / 0.16);
+  --glass-border-strong: rgb(64 56 44 / 0.28);
+  --sheen-c: rgb(150 132 100 / 0.28);
+  --hand-idle: #4e4839;
+  --hand-rest: #302c24;
+  --hand-paused: #8f6a1a;
+  --hand-finished: #3568a8;
+  --tick: rgb(64 56 44 / 0.22);
+  --tick-strong: rgb(64 56 44 / 0.44);
+  --dial-particle: #6b6350;
 }
 
 /* liquid-glass 按钮质感（对齐 shuding/liquid-glass 的容器特征）：

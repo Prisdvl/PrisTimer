@@ -56,16 +56,19 @@ watch(tab, () => {
 /** 启动画面（Scramble 标题 + 粒子）：播完一次就摘掉，全程 ≤0.5s。 */
 const introDone = ref(false);
 
-/** 背景主题：deep 深空（默认）/ void 虚空 / dawn 晨雾（浅色）/ aurora 极光。
+/** 背景主题：deep 深空（默认）/ void 虚空 / dawn 晨雾（浅色）/
+ *  aurora 极光 / ember 暮霞（第 21 轮）/ paper 纸墨（第 21 轮，浅色）。
  *  切换只换 data-theme + 一组 CSS 变量（@property 注册过，0.9s 平滑插值），
  *  特色动效层由 SmokeField 按 theme 交叉换景。 */
-type BgTheme = "deep" | "void" | "dawn" | "aurora";
+type BgTheme = "deep" | "void" | "dawn" | "aurora" | "ember" | "paper";
 
 const THEMES: Array<{ id: BgTheme; label: string; swatch: string }> = [
   { id: "deep", label: "深空", swatch: "linear-gradient(135deg,#6082ff,#967dff 60%,#46a5e1)" },
   { id: "void", label: "虚空", swatch: "linear-gradient(135deg,#0a0b10,#343060)" },
   { id: "dawn", label: "晨雾", swatch: "linear-gradient(135deg,#eef3fa,#9fc6e8)" },
   { id: "aurora", label: "极光", swatch: "linear-gradient(135deg,#2fd48e,#1f8fa8)" },
+  { id: "ember", label: "暮霞", swatch: "linear-gradient(135deg,#ff8a50,#d45a7a 62%,#5a3a4e)" },
+  { id: "paper", label: "纸墨", swatch: "linear-gradient(135deg,#f4f1ea,#b0a890)" },
 ];
 
 const THEME_KEY = "pristimer.theme";
@@ -81,6 +84,29 @@ const theme = ref<BgTheme>(loadTheme());
 const currentThemeLabel = computed(
   () => THEMES.find((t) => t.id === theme.value)?.label ?? "深空",
 );
+const currentThemeSwatch = computed(
+  () => THEMES.find((t) => t.id === theme.value)?.swatch ?? "",
+);
+
+/** 底部主题菜单（第 21 轮：主题键从裸色点升级为底部菜单 + 弹出面板）。 */
+const themeMenuOpen = ref(false);
+const themeCtlRoot = ref<HTMLElement | null>(null);
+
+function pickTheme(id: BgTheme): void {
+  theme.value = id;
+  themeMenuOpen.value = false;
+}
+
+function onGlobalPointerDown(e: PointerEvent): void {
+  if (!themeMenuOpen.value) return;
+  if (themeCtlRoot.value && !themeCtlRoot.value.contains(e.target as Node)) {
+    themeMenuOpen.value = false;
+  }
+}
+
+function onGlobalKeydown(e: KeyboardEvent): void {
+  if (e.key === "Escape") themeMenuOpen.value = false;
+}
 
 function syncTheme(): void {
   document.documentElement.setAttribute("data-theme", theme.value);
@@ -1107,6 +1133,9 @@ let unlistenWinMove: UnlistenFn | null = null;
 let unlistenWinResize: UnlistenFn | null = null;
 
 onMounted(async () => {
+  // 主题菜单的外点关闭 / Escape 关闭（第 21 轮）
+  document.addEventListener("pointerdown", onGlobalPointerDown);
+  document.addEventListener("keydown", onGlobalKeydown);
   // 窗口几何已由 Rust 在 show 之前摆好（见 lib.rs 的 place_main_window），
   // 前端不再参与启动期恢复 —— 这里只补运行时约束。
   syncMiniClass();
@@ -1188,6 +1217,8 @@ watch(
 );
 
 onUnmounted(() => {
+  document.removeEventListener("pointerdown", onGlobalPointerDown);
+  document.removeEventListener("keydown", onGlobalKeydown);
   unlisten?.();
   unlistenPomodoro?.();
   unlistenWinMove?.();
@@ -1329,7 +1360,7 @@ onUnmounted(() => {
               :theme="theme"
             >
               <div class="readout">
-                <div class="clock-window sheen">
+                <div class="clock-window">
                   <p class="clock" :class="{ long: isLongFormat }" :aria-label="display">
                     <!-- 逐位渲染：每个字符占一个固定宽度的槽，槽内换值时上下翻页。
                          不用 out-in 模式（那会先清空再进场，每秒闪一次）；
@@ -1545,21 +1576,39 @@ onUnmounted(() => {
                 >
                   冥想
                 </button>
-                <span class="theme-ctl">
-                  <span class="theme-swatches" role="radiogroup" aria-label="背景主题">
-                    <button
-                      v-for="t in THEMES"
-                      :key="t.id"
-                      class="swatch"
-                      :class="{ active: theme === t.id }"
-                      :style="{ background: t.swatch }"
-                      :title="`主题：${t.label}`"
-                      role="radio"
-                      :aria-checked="theme === t.id"
-                      @click="theme = t.id"
-                    />
-                  </span>
-                  <span class="theme-name">{{ currentThemeLabel }}</span>
+                <span class="theme-ctl" ref="themeCtlRoot">
+                  <!-- 第 21 轮：主题键升级为底部菜单 —— 按钮显示当前主题
+                       （色点 + 名称），点击向上弹出玻璃菜单，六主题带选中态 -->
+                  <button
+                    class="theme-btn"
+                    :class="{ open: themeMenuOpen }"
+                    :aria-expanded="themeMenuOpen"
+                    title="切换主题"
+                    @click="themeMenuOpen = !themeMenuOpen"
+                  >
+                    <i class="theme-dot" :style="{ background: currentThemeSwatch }" />
+                    <span>{{ currentThemeLabel }}</span>
+                    <svg class="chev" viewBox="0 0 10 6" aria-hidden="true">
+                      <path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                  <Transition name="theme-pop">
+                    <span v-if="themeMenuOpen" class="theme-menu" role="radiogroup" aria-label="背景主题">
+                      <button
+                        v-for="t in THEMES"
+                        :key="t.id"
+                        class="theme-item"
+                        :class="{ active: theme === t.id }"
+                        role="radio"
+                        :aria-checked="theme === t.id"
+                        @click="pickTheme(t.id)"
+                      >
+                        <i class="sw" :style="{ background: t.swatch }" />
+                        <span>{{ t.label }}</span>
+                        <i v-if="theme === t.id" class="check" aria-hidden="true">✓</i>
+                      </button>
+                    </span>
+                  </Transition>
                 </span>
               </span>
             </div>
@@ -2944,41 +2993,117 @@ onUnmounted(() => {
   box-shadow: 0 0 14px rgb(181 140 255 / 0.28);
 }
 .theme-ctl {
+  position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
 }
-.theme-name {
-  min-width: 2.2em;
-  font-size: 0.72rem;
-  color: var(--ink-dim);
-}
-/* 主题色板：四枚渐变小圆点，当前主题带描边 + 微光；点击即切，颜色变量整体渐变 */
-.theme-swatches {
+/* 第 21 轮：主题菜单按钮 —— 当前主题的色点 + 名称 + 下翻箭头，
+   形态借 presets 按钮的胶囊壳，是底部菜单的一等公民而非角落色点 */
+.theme-btn {
   display: inline-flex;
-  gap: 0.35rem;
-}
-.swatch {
-  width: 19px;
-  height: 19px;
-  padding: 0;
-  border: 1px solid var(--glass-border-strong);
-  border-radius: 50%;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.65rem 0.3rem 0.45rem;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: var(--glass-bg);
+  color: var(--ink-soft);
+  font-size: 0.72rem;
   cursor: pointer;
   transition:
-    transform var(--t-base) var(--ease-out-back),
-    box-shadow var(--t-base) ease,
-    border-color var(--t-base) ease;
+    border-color var(--t-base) var(--ease-out-expo),
+    background var(--t-base) var(--ease-out-expo),
+    color var(--t-base) ease,
+    box-shadow var(--t-base) ease;
 }
-.swatch:hover {
-  transform: scale(1.15);
+.theme-btn:hover,
+.theme-btn.open {
+  border-color: var(--glass-border-strong);
+  background: var(--glass-bg-strong);
+  color: var(--ink);
+  box-shadow: var(--glass-shadow);
 }
-.swatch.active {
-  border-color: var(--ink-soft);
-  box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--ink) 26%, transparent),
-    0 0 12px color-mix(in srgb, var(--accent) 32%, transparent);
-  transform: scale(1.06);
+.theme-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid rgb(255 255 255 / 0.25);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+.theme-btn .chev {
+  width: 9px;
+  height: 6px;
+  color: var(--ink-faint);
+  transition: transform var(--t-base) var(--ease-out-back);
+}
+.theme-btn.open .chev {
+  transform: rotate(180deg);
+}
+/* 弹出菜单：向上展开的玻璃面板，铺在底部菜单上方（高于内容层） */
+.theme-menu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  right: 0;
+  z-index: var(--z-chrome);
+  display: flex;
+  flex-direction: column;
+  min-width: 132px;
+  padding: 4px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: var(--glass-bg-strong);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-edge-strong), var(--glass-shadow-lg);
+  transform-origin: 85% 100%;
+}
+.theme-item {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.42rem 0.6rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-fast) ease, color var(--t-fast) ease;
+}
+.theme-item:hover {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  color: var(--ink);
+}
+/* ★ 选中项不能直接吃 --accent：空闲态 accent 是深灰 #4a5160，
+   深色主题下文字会隐形 —— 文字用墨色、选中态用浅色底表达。
+   ★ 特异性警示：元素同时命中 .presets button.active（0,3,1），
+   这里必须挂 .presets 前缀抬到 (0,4,0) 才能盖过它。 */
+.presets .theme-item.active {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+.theme-item .sw {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border-strong);
+}
+.theme-item .check {
+  margin-left: auto;
+  font-size: 0.68rem;
+}
+/* 弹出过渡：从按钮锚点浮起 + 回弹收尾（--ease-out-back 的微过冲） */
+.theme-pop-enter-active {
+  transition: opacity 0.26s var(--ease-out-expo), transform 0.3s var(--ease-out-back);
+}
+.theme-pop-leave-active {
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.theme-pop-enter-from,
+.theme-pop-leave-to {
+  opacity: 0;
+  transform: translateY(8px) scale(0.94);
 }
 
 /* ---------------------------------------------------- 使用提示（Tabs） */

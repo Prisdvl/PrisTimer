@@ -17,7 +17,7 @@ import { computed, ref, watch } from "vue";
 import DialParticles from "./DialParticles.vue";
 
 /** 主题标识：透传给表盘粒子取色（App 的主题色板驱动）。 */
-export type DialTheme = "deep" | "void" | "dawn" | "aurora";
+export type DialTheme = "deep" | "void" | "dawn" | "aurora" | "ember" | "paper";
 
 const props = defineProps<{
   /** 已进行的毫秒数（倒计时取 limit - remaining）。 */
