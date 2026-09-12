@@ -869,7 +869,7 @@ async function exportReport(): Promise<void> {
 .card .label {
   margin: 0;
   font-size: 0.72rem;
-  color: #8b93a3;
+  color: var(--ink-dim);
   letter-spacing: 0.1em;
 }
 .card .value {
@@ -880,7 +880,7 @@ async function exportReport(): Promise<void> {
 .card small {
   margin-left: 0.4rem;
   font-size: 0.7rem;
-  color: #8b93a3;
+  color: var(--ink-dim);
 }
 
 /* -------------------------------------------------------------- 趋势区块 */
@@ -918,7 +918,7 @@ async function exportReport(): Promise<void> {
   margin: 0 0 0.6rem;
   font-size: 0.8rem;
   font-weight: 500;
-  color: #8b93a3;
+  color: var(--ink-dim);
   letter-spacing: 0.1em;
 }
 .block-head {
@@ -972,14 +972,14 @@ async function exportReport(): Promise<void> {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #8b93a3;
+  color: var(--ink-dim);
   font-size: 0.75rem;
   cursor: pointer;
   white-space: nowrap;
   transition: color 0.25s ease;
 }
 .seg button:hover {
-  color: #cfd4dd;
+  color: var(--ink-soft);
 }
 .seg button.active {
   color: #3ecf8e;
@@ -1012,12 +1012,12 @@ async function exportReport(): Promise<void> {
   border: 1px solid var(--glass-border, rgb(255 255 255 / 0.08));
   border-radius: 8px;
   background: var(--glass-bg, rgb(255 255 255 / 0.045));
-  color: #8b93a3;
+  color: var(--ink-dim);
   cursor: pointer;
   transition: color 0.2s ease, border-color 0.2s ease, transform 0.4s var(--ease-out-expo, ease);
 }
 .goals-toggle:hover {
-  color: #cfd4dd;
+  color: var(--ink-soft);
   border-color: rgb(255 255 255 / 0.16);
 }
 .goals-toggle.active {
@@ -1044,7 +1044,7 @@ async function exportReport(): Promise<void> {
 }
 .goal-edit-name {
   font-size: 0.78rem;
-  color: #cfd4dd;
+  color: var(--ink-soft);
   text-align: right;
 }
 .goal-input {
@@ -1064,7 +1064,7 @@ async function exportReport(): Promise<void> {
 }
 .goal-unit {
   font-size: 0.7rem;
-  color: #8b93a3;
+  color: var(--ink-dim);
 }
 .goal-edit-foot {
   display: flex;
@@ -1093,7 +1093,7 @@ li.done .tag-name {
 .goal-empty {
   margin: 0;
   font-size: 0.75rem;
-  color: #8b93a3;
+  color: var(--ink-dim);
 }
 
 /* ---------------------------------------------------------------- 近 7 天回顾 */
@@ -1112,7 +1112,7 @@ li.done .tag-name {
 .rv-label {
   margin: 0;
   font-size: 0.7rem;
-  color: #8b93a3;
+  color: var(--ink-dim);
   letter-spacing: 0.08em;
 }
 .rv-value {
@@ -1123,12 +1123,12 @@ li.done .tag-name {
 .rv-value small {
   margin-left: 0.25rem;
   font-size: 0.7rem;
-  color: #8b93a3;
+  color: var(--ink-dim);
 }
 .rv-sub {
   margin: 0.25rem 0 0;
   font-size: 0.68rem;
-  color: #8b93a3;
+  color: var(--ink-dim);
 }
 .rv-sub.up {
   color: #6fe0a8;
@@ -1150,7 +1150,7 @@ li.done .tag-name {
   align-items: center;
   gap: 0.7rem;
   font-size: 0.75rem;
-  color: #cfd4dd;
+  color: var(--ink-soft);
 }
 .goal-dots {
   display: flex;
@@ -1170,7 +1170,7 @@ li.done .tag-name {
 .rv-goal-days {
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
-  color: #8b93a3;
+  color: var(--ink-dim);
 }
 .rv-goal-days b {
   color: var(--accent, #3ecf8e);
@@ -1229,7 +1229,7 @@ li.done .tag-name {
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #8b93a3;
+  color: var(--ink-dim);
   cursor: pointer;
   opacity: 0;
   transition: color 0.2s ease, background 0.2s ease, opacity 0.2s ease;
@@ -1252,7 +1252,7 @@ li.done .tag-name {
 .rename-line {
   margin: 0 0 0.5rem;
   font-size: 0.78rem;
-  color: #cfd4dd;
+  color: var(--ink-soft);
 }
 .rename-row {
   display: flex;
@@ -1266,14 +1266,14 @@ li.done .tag-name {
 .rename-hint {
   margin: 0.5rem 0 0;
   font-size: 0.68rem;
-  color: #8b93a3;
+  color: var(--ink-dim);
 }
 
 /* -------------------------------------------------------------- 专注时段 */
 .hour-peak {
   margin: 0 0 0.4rem;
   font-size: 0.78rem;
-  color: #8b93a3;
+  color: var(--ink-dim);
 }
 .hour-peak b {
   color: #3ecf8e;
@@ -1281,7 +1281,7 @@ li.done .tag-name {
 }
 .tag-name {
   font-size: 0.78rem;
-  color: #cfd4dd;
+  color: var(--ink-soft);
   text-align: right;
 }
 .tag-bar-track {
@@ -1306,7 +1306,7 @@ li.done .tag-name {
 .tag-value small {
   margin-left: 0.3rem;
   font-size: 0.68rem;
-  color: #8b93a3;
+  color: var(--ink-dim);
 }
 
 /* ------------------------------------------------------------------ 底部 */

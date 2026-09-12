@@ -113,8 +113,8 @@ function smooth(pts: Pt[]): string {
   >
     <defs>
       <linearGradient id="trend-area" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#3ecf8e" stop-opacity="0.22" />
-        <stop offset="1" stop-color="#3ecf8e" stop-opacity="0" />
+        <stop offset="0" style="stop-color: var(--accent)" stop-opacity="0.22" />
+        <stop offset="1" style="stop-color: var(--accent)" stop-opacity="0" />
       </linearGradient>
     </defs>
 
@@ -143,7 +143,6 @@ function smooth(pts: Pt[]): string {
           :d="linePath"
           pathLength="1"
           fill="none"
-          stroke="#3ecf8e"
           stroke-width="2.5"
           stroke-linecap="round"
         />
@@ -184,7 +183,7 @@ function smooth(pts: Pt[]): string {
 
 /* ------------------------------------------------------------------ 柱状 */
 .bar {
-  fill: rgb(62 207 142 / 0.45);
+  fill: color-mix(in srgb, var(--accent) 45%, transparent);
   transform-box: fill-box;
   transform-origin: 50% 100%;
   animation: bar-in 0.5s var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1)) backwards;
@@ -192,13 +191,13 @@ function smooth(pts: Pt[]): string {
   transition: fill 0.2s ease, x 0.45s var(--ease-out-expo, ease), y 0.4s var(--ease-out-expo, ease), width 0.45s var(--ease-out-expo, ease), height 0.4s var(--ease-out-expo, ease);
 }
 .bar:hover {
-  fill: #3ecf8e;
+  fill: var(--accent);
 }
 .bar.today {
-  fill: #3ecf8e;
+  fill: var(--accent);
 }
 .bar.zero {
-  fill: rgb(255 255 255 / 0.08);
+  fill: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 @keyframes bar-in {
   from {
@@ -209,6 +208,7 @@ function smooth(pts: Pt[]): string {
 /* ------------------------------------------------------------------ 折线 */
 /* pathLength="1" 把描线归一化：dasharray 1 + dashoffset 1→0 即描线动画 */
 .line-path {
+  stroke: var(--accent);
   stroke-dasharray: 1;
   animation: draw 0.7s var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1)) 0.05s backwards;
 }
@@ -221,7 +221,7 @@ function smooth(pts: Pt[]): string {
   animation: fade 0.5s ease 0.45s backwards;
 }
 .dot {
-  fill: #3ecf8e;
+  fill: var(--accent);
   transform-box: fill-box;
   transform-origin: center;
   animation: pop 0.35s var(--ease-out-back, ease) backwards;
@@ -263,7 +263,7 @@ function smooth(pts: Pt[]): string {
 
 /* ------------------------------------------------------------------ 坐标轴 */
 .axis-label {
-  fill: #6b7280;
+  fill: var(--ink-faint);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }

@@ -316,7 +316,7 @@ function monthValue(span: { key: string; start: number; end: number }): string {
   color: var(--ink-dim);
 }
 .summary b {
-  color: #3ecf8e;
+  color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
 .summary .gap {
@@ -423,7 +423,7 @@ function monthValue(span: { key: string; start: number; end: number }): string {
 }
 
 .level-0 {
-  background: rgb(255 255 255 / 0.055);
+  background: color-mix(in srgb, var(--ink) 5.5%, transparent);
 }
 .level-1 {
   background: #1f4d3a;
@@ -487,7 +487,7 @@ function monthValue(span: { key: string; start: number; end: number }): string {
   opacity: 0.3;
 }
 .month-strip li.on {
-  border-color: #3ecf8e;
+  border-color: var(--accent);
   background: rgb(62 207 142 / 0.12);
   box-shadow: 0 0 14px rgb(62 207 142 / 0.2);
 }
@@ -516,7 +516,7 @@ function monthValue(span: { key: string; start: number; end: number }): string {
   transition: color var(--t-base) ease;
 }
 .month-strip li.on .m-value {
-  color: #3ecf8e;
+  color: var(--accent);
 }
 
 /* ---------------------------------------------------------------- 图例 */

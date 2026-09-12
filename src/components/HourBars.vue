@@ -103,7 +103,7 @@ const stepMs = 9;
 }
 
 .hbar {
-  fill: rgb(62 207 142 / 0.4);
+  fill: color-mix(in srgb, var(--accent) 40%, transparent);
   transform-box: fill-box;
   transform-origin: 50% 100%;
   animation: hbar-in 0.5s var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1)) backwards;
@@ -112,14 +112,14 @@ const stepMs = 9;
 }
 /* 峰值那根用实心 + 轻微描边光晕，一眼锁定「我的黄金时段」 */
 .hbar.peak {
-  fill: #3ecf8e;
+  fill: var(--accent);
   filter: drop-shadow(0 0 4px rgb(62 207 142 / 0.45));
 }
 .hbar:hover:not(.zero) {
-  fill: #3ecf8e;
+  fill: var(--accent);
 }
 .hbar.zero {
-  fill: rgb(255 255 255 / 0.08);
+  fill: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 @keyframes hbar-in {
   from {
@@ -128,12 +128,12 @@ const stepMs = 9;
 }
 
 .axis-label {
-  fill: #6b7280;
+  fill: var(--ink-faint);
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
 .axis-label.midnight {
-  fill: #4b5563;
+  fill: var(--ink-dim);
 }
 
 @media (prefers-reduced-motion: reduce) {
