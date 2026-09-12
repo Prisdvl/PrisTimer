@@ -1,0 +1,67 @@
+[package]
+name = "pristimer"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "pristimer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-autostart = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+pristimer-core = { path = "../pristimer-core", features = ["serde"] }
+pristimer-store = { path = "../pristimer-store", features = ["serde"] }
+
+# 无边框窗口的圆角只能走 DWM：`decorations: false` 的窗口没有 WS_CAPTION，
+# Windows 不会给它自动圆角，四个直角在深色桌面上像是没做完。
+# 只用到 dwmapi 里的一个属性，所以开最小 feature 集。
+#
+# 另外几项给「启动路径上的最后一道防线」用（见 lib.rs 的
+# `acquire_single_instance` / `show_fatal_dialog`）：
+#   Win32_System_Threading          —— CreateMutexW，单实例互斥体
+#   Win32_Security                  —— CreateMutexW 的签名里有 SECURITY_ATTRIBUTES，
+#                                       windows-sys 把它挂在 Security 这个 feature 下
+#                                      （不加就会看到「no CreateMutexW in Threading」）
+#   Win32_UI_WindowsAndMessaging    —— FindWindowW / SetForegroundWindow / MessageBoxW
+#   Win32_Foundation                —— GetLastError / ERROR_ALREADY_EXISTS
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Graphics_Dwm",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true
+# 刻意**不设** `panic = "abort"`。
+#
+# 那是 Tauri 官方体积优化建议里的一条，但它把一个「局部错误」放大成「进程消失」：
+# 任何一次 panic（锁中毒、一次失败的文件写入、计时线程里的一处 unwrap）都会
+# 直接终结整个应用；而 GUI 子系统下 panic 信息写向不存在的 stderr ——
+# 用户看到的就是"用着用着窗口突然没了"，没有任何线索。
+#
+# 保持默认的 unwind 之后，命令里的 panic 会被 Tauri 的 invoke 层捕获并变成
+# 前端可见的错误，计时线程里的 panic 只挂掉那个线程。代价是二进制约 +5%，
+# 换来的是「出错可定位」而不是「静默蒸发」。

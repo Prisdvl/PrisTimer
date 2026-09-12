@@ -1,0 +1,537 @@
+/* ===========================================================================
+   PrisTimer 设计系统层
+   ---------------------------------------------------------------------------
+   这里是全应用唯一的「视觉常量 + 质感基元」来源。组件里只允许消费变量
+   （var(--glass-bg)、var(--ease-out-expo)），不再各写各的过渡曲线与背景色 ——
+   否则改一次主题要翻二十个文件。
+
+   分三层：
+     1. 令牌（tokens）：颜色 / 玻璃 / 缓动 / 时长 / 层级
+     2. 基元（primitives）：.glass 系列工具类
+     3. 场景（scenes）：烟雾弥散背景、滚动条、全局重置
+   =========================================================================== */
+
+/* --------------------------------------------------------------- 1. 令牌 */
+/* ★ 主题可过渡的秘密：@property 把这些自定义属性注册成真正的 <color>，
+   浏览器才能对它们做插值 —— 切主题时 :root 上的 transition 会让所有引用
+   （渐变底色、烟团、墨色、玻璃）整体丝滑渐变，而不是"啪"地跳变。
+   未注册的属性（如 --lg-shadow 阴影串）仍会瞬切，属可接受的瞬态。 */
+@property --smoke-a {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #6082ff;
+}
+@property --smoke-b {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #967dff;
+}
+@property --smoke-c {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #46a5e1;
+}
+@property --smoke-d {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #7891eb;
+}
+@property --bg-a {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #12161d;
+}
+@property --bg-b {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #0a0c10;
+}
+@property --bg-c {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #07080b;
+}
+@property --ink {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #e8eaed;
+}
+@property --ink-soft {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #cfd4dd;
+}
+@property --ink-dim {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #8b93a3;
+}
+@property --ink-faint {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #6b7280;
+}
+@property --glass-bg {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(255 255 255 / 0.05);
+}
+@property --glass-bg-strong {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(255 255 255 / 0.09);
+}
+@property --glass-bg-deep {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(10 13 18 / 0.44);
+}
+@property --glass-border {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(255 255 255 / 0.09);
+}
+@property --glass-border-strong {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(255 255 255 / 0.18);
+}
+
+:root {
+  /* 缓动曲线：easings.net 标准集，全应用统一引用 */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-back: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in-out-soft: cubic-bezier(0.65, 0, 0.35, 1);
+  /* 形态融合专用：起步快、收尾极缓，让「融进另一个按钮」有黏滞感 */
+  --ease-morph: cubic-bezier(0.22, 1.12, 0.36, 1);
+
+  /* 时长档：交互反馈一律用这三档，避免出现 0.23s / 0.27s 这种碎片值 */
+  --t-fast: 0.16s;
+  --t-base: 0.3s;
+  --t-slow: 0.55s;
+
+  /* 墨色层级 */
+  --ink: #e8eaed;
+  --ink-soft: #cfd4dd;
+  --ink-dim: #8b93a3;
+  --ink-faint: #6b7280;
+
+  /* 玻璃：半透明面板 + 高光边 + 投影，三件套缺一不可 ——
+     只有背景模糊会显得"糊"，加上顶部 1px 高光才有玻璃的厚度 */
+  --glass-bg: rgb(255 255 255 / 0.05);
+  --glass-bg-strong: rgb(255 255 255 / 0.09);
+  --glass-bg-deep: rgb(10 13 18 / 0.44);
+  --glass-border: rgb(255 255 255 / 0.09);
+  --glass-border-strong: rgb(255 255 255 / 0.18);
+  --glass-blur: blur(18px) saturate(1.45);
+  --glass-blur-lg: blur(30px) saturate(1.6);
+  --glass-edge: inset 0 1px 0 rgb(255 255 255 / 0.075);
+  --glass-edge-soft: inset 0 1px 0 rgb(255 255 255 / 0.045);
+  --glass-shadow: 0 10px 30px rgb(0 0 0 / 0.26);
+  --glass-shadow-lg: 0 20px 60px rgb(0 0 0 / 0.4);
+
+  /* 强调色由 App 按计时状态注入（--accent），这里给一个兜底 */
+  --accent: #3ecf8e;
+
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 18px;
+
+  /* 层级：背景 < 内容 < 标题栏 < 提示 */
+  --z-smoke: 0;
+  --z-content: 1;
+  --z-chrome: 40;
+  --z-toast: 90;
+
+  /* 主题（背景氛围）。烟团/光带/底色渐变只引用这组颜色变量。
+     深空色系是出厂默认：靛蓝/紫/青/蓝的低饱和星云 —— 绿色只保留在强调色上。
+     ★ 全部注册为 <color> 并挂过渡：切主题 = 一条 transition 全端渐变。 */
+  --smoke-a: #6082ff; /* 主调：靛蓝 */
+  --smoke-b: #967dff; /* 辅调：星紫 */
+  --smoke-c: #46a5e1; /* 冷调：青 */
+  --smoke-d: #7891eb; /* 深调：蓝 */
+  --bg-a: #12161d;
+  --bg-b: #0a0c10;
+  --bg-c: #07080b;
+
+  /* 主题切换的丝滑过渡：所有注册过的颜色变量一起插值（0.9s 吃满缓动） */
+  transition:
+    --smoke-a 0.9s var(--ease-in-out-soft),
+    --smoke-b 0.9s var(--ease-in-out-soft),
+    --smoke-c 0.9s var(--ease-in-out-soft),
+    --smoke-d 0.9s var(--ease-in-out-soft),
+    --bg-a 0.9s var(--ease-in-out-soft),
+    --bg-b 0.9s var(--ease-in-out-soft),
+    --bg-c 0.9s var(--ease-in-out-soft),
+    --ink 0.9s var(--ease-in-out-soft),
+    --ink-soft 0.9s var(--ease-in-out-soft),
+    --ink-dim 0.9s var(--ease-in-out-soft),
+    --ink-faint 0.9s var(--ease-in-out-soft),
+    --glass-bg 0.9s var(--ease-in-out-soft),
+    --glass-bg-strong 0.9s var(--ease-in-out-soft),
+    --glass-bg-deep 0.9s var(--ease-in-out-soft),
+    --glass-border 0.9s var(--ease-in-out-soft),
+    --glass-border-strong 0.9s var(--ease-in-out-soft);
+}
+
+/* ---------------------------------------------------------------- 主题集 */
+/* 深空（默认）：靛蓝紫星云，斜向光带。见 :root 缺省值。 */
+
+/* 虚空：接近纯黑的底 + 极暗的紫，烟几乎退场，交给了 SmokeField 的
+   星尘与流星层（特色动效）。适合深夜极限专注，OLED 友好。 */
+:root[data-theme="void"] {
+  --smoke-a: #343060;
+  --smoke-b: #42285e;
+  --smoke-c: #1c3450;
+  --smoke-d: #2a2a4c;
+  --bg-a: #060709;
+  --bg-b: #030304;
+  --bg-c: #010102;
+}
+
+/* 晨雾（浅色）：雾蓝白的日间底色，墨色翻暗、玻璃换向（白底高透 +
+   深色描边）。烟团变成漂移的云絮。 */
+:root[data-theme="dawn"] {
+  --smoke-a: #ffffff;
+  --smoke-b: #bcd2ff;
+  --smoke-c: #9fc6e8;
+  --smoke-d: #dbe6ff;
+  --bg-a: #e6ecf5;
+  --bg-b: #d3dde9;
+  --bg-c: #c3d0e0;
+  --ink: #1d2530;
+  --ink-soft: #36435a;
+  --ink-dim: #5d6d86;
+  --ink-faint: #8694aa;
+  --glass-bg: rgb(255 255 255 / 0.4);
+  --glass-bg-strong: rgb(255 255 255 / 0.58);
+  --glass-bg-deep: rgb(28 40 60 / 0.1);
+  --glass-border: rgb(30 42 64 / 0.14);
+  --glass-border-strong: rgb(30 42 64 / 0.26);
+}
+
+/* 极光：绿青底色的夜林上空，烟团是缓缓漂移的极光帷幕（特色动效在
+   SmokeField 的 curtain 层）。 */
+:root[data-theme="aurora"] {
+  --smoke-a: #2fd48e;
+  --smoke-b: #27bca2;
+  --smoke-c: #1f8fa8;
+  --smoke-d: #3a7d6e;
+  --bg-a: #0a1512;
+  --bg-b: #061010;
+  --bg-c: #030a08;
+}
+
+/* liquid-glass 按钮质感（对齐 shuding/liquid-glass 的容器特征）：
+   · 阴影全部走 inset——四缘的细白高光勾出玻璃"厚度"，对角两团内侧暗影
+     模拟"光折射进玻璃后留下的暗部"，最后一层外投影给悬浮感；
+   · 背景透镜只做低通模糊 + 提饱和。★ 实测教训：contrast/brightness 加在
+     backdrop 上会把噪点层（.grain）放大成白色斑块，2.5px 的小模糊也会让
+     高频噪点结块 —— 8px 起噪点才被平均掉，透镜才"干净"；
+   · 不用 url(#svg-filter)：Chromium 的 backdrop-filter: url() 支持不可靠，
+     一旦失效玻璃整片消失。 */
+:root {
+  --lg-shadow:
+    inset 0.5px 0.5px 1px rgb(255 255 255 / 0.55),
+    inset -0.5px -0.5px 1px rgb(255 255 255 / 0.2),
+    inset -1.5px -1.5px 3px rgb(255 255 255 / 0.14),
+    inset 1.5px 1.5px 3px rgb(255 255 255 / 0.1),
+    inset -10px -12px 26px rgb(0 0 0 / 0.13),
+    inset 10px 12px 26px rgb(0 0 0 / 0.15),
+    0 6px 16px rgb(0 0 0 / 0.22);
+  --lg-filter: blur(8px) saturate(1.5);
+  --lg-bg: rgb(255 255 255 / 0.055);
+  --lg-bg-hover: rgb(255 255 255 / 0.1);
+}
+
+/* （旧「深海」主题已由四主题系统取代：deep / void / dawn / aurora，
+   切换由 App 的主题色板选择器驱动 data-theme。） */
+
+/* ------------------------------------------------------------- 2. 基元 */
+.glass,
+.glass-lg {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-edge), var(--glass-shadow);
+}
+.glass-lg {
+  border-radius: var(--radius-lg);
+  background: var(--glass-bg-strong);
+  backdrop-filter: var(--glass-blur-lg);
+  box-shadow: var(--glass-edge), var(--glass-shadow-lg);
+}
+
+/* 可交互玻璃：悬停微抬 + 描边变亮，按下回弹。整个应用共用一套手感。 */
+.glass-interactive {
+  transition:
+    transform var(--t-base) var(--ease-out-back),
+    border-color var(--t-base) var(--ease-out-expo),
+    background var(--t-base) var(--ease-out-expo),
+    box-shadow var(--t-base) var(--ease-out-expo),
+    color var(--t-fast) ease;
+}
+.glass-interactive:hover:not(:disabled) {
+  border-color: var(--glass-border-strong);
+  background: var(--glass-bg-strong);
+  transform: translateY(-1px);
+}
+.glass-interactive:active:not(:disabled) {
+  transform: scale(0.97);
+  transition-duration: var(--t-fast);
+}
+
+/* --------------------------------------------------------- 3. 全局重置 */
+* {
+  box-sizing: border-box;
+}
+
+html {
+  /* ★ 滚动条已全局取消（见下方"滚动条"段）：右侧不再有任何原生滚动条，
+     内容宽度恒定，切页/滚动永远不会引起横向挤压 —— 原先用
+     scrollbar-gutter: stable 预留槽位的方案连同槽位本身一并撤掉，
+     滚动位置改由页面顶部的进度条表达（App.vue 的 .scroll-progress）。
+     底色渐变走 --bg-* 主题变量（@property 注册，切主题平滑过渡）。 */
+  background: radial-gradient(120% 90% at 50% 0%, var(--bg-a) 0%, var(--bg-b) 55%, var(--bg-c) 100%) fixed;
+}
+
+/* 迷你形态：视口即边界（滚动条已全局取消，这里只需禁掉滚动本身，
+   防止小窗内容意外溢出时出现橡皮筋）。 */
+html.mini-mode {
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  user-select: none;
+  /* 无边框窗口：整体禁用原生滚动回弹与拖动，交给自定义标题栏 */
+  overscroll-behavior: none;
+}
+
+/* ------------------------------------------------------- 烟雾弥散背景 */
+/* 实现要点：**不用 filter: blur()**。大尺寸元素加 filter 会强制软件栅格化，
+   掉帧严重；radial-gradient 的中心到边缘本身就是连续过渡，天然柔和，
+   再靠 transform 慢速漂移即可得到"烟在扩散"的观感，全程走 GPU 合成。 */
+.smoke {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-smoke);
+  overflow: hidden;
+  pointer-events: none;
+  background: radial-gradient(120% 90% at 50% 0%, var(--bg-a) 0%, var(--bg-b) 55%, var(--bg-c) 100%);
+}
+
+.puff {
+  position: absolute;
+  border-radius: 50%;
+  opacity: 0.72;
+  will-change: transform, opacity;
+  /* ★ 运动全部由 GSAP 驱动（SmokeField.vue）：位移/缩放/明暗三条补间在
+     JS 侧共享一条 GSAP 时间轴，替代原来的 CSS keyframes（drift/breathe）。
+     CSS 只保留几何与配色 —— 初始状态即补间的 from 帧，两者无缝衔接。 */
+}
+
+/* 六团不同色温的"烟"：主强调、冷色、暖紫、暖琥珀。
+   尺寸与周期互相错开，避免形成可辨认的重复节拍。
+   ★ 周期压到 14–34s、位移给到 15%+：原来那组 26–64s / 9% 在数学上确实"在动"，
+   但每秒只挪两三个像素 —— 人眼判定成静止。氛围动画的可用区间本来就是
+   "明显在动"与"晃得心烦"之间很窄的一条，这里往上调了一档。
+   ★ 颜色全部走 --smoke-* 主题变量；饱和度与覆盖面积比初版压低约四成 ——
+   原先 46rem 的大团在统计页会连成一块斑驳的色斑，现在只留"隐约有色"的氛围。 */
+.puff-1 {
+  --dur: 22s;
+  --bdur: 9s;
+  --delay: -5s;
+  width: 38rem;
+  height: 38rem;
+  left: -12rem;
+  top: -14rem;
+  background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--smoke-a) 22%, transparent), transparent 66%);
+}
+.puff-2 {
+  --dur: 30s;
+  --bdur: 13s;
+  --delay: -18s;
+  width: 44rem;
+  height: 44rem;
+  right: -17rem;
+  top: -8rem;
+  background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--smoke-b) 18%, transparent), transparent 68%);
+}
+.puff-3 {
+  --dur: 26s;
+  --bdur: 11s;
+  --delay: -24s;
+  width: 32rem;
+  height: 32rem;
+  left: 8%;
+  bottom: -18rem;
+  background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--smoke-c) 16%, transparent), transparent 66%);
+}
+.puff-4 {
+  --dur: 34s;
+  --bdur: 15s;
+  --delay: -9s;
+  width: 28rem;
+  height: 28rem;
+  right: 4%;
+  bottom: -13rem;
+  background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--smoke-d) 13%, transparent), transparent 68%);
+}
+.puff-5 {
+  --dur: 20s;
+  --bdur: 8s;
+  --delay: -19s;
+  width: 22rem;
+  height: 22rem;
+  left: 42%;
+  top: 28%;
+  background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--smoke-a) 14%, transparent), transparent 70%);
+}
+/* 一缕极淡的亮烟，专门在玻璃面板背面飘过 —— 让 backdrop-filter 有东西可模糊，
+   玻璃质感才看得出来（纯深色底上玻璃与实色无法区分）。
+   ★ 白烟只允许待在上半区/中带：白色高光透过控制区的小按钮会读成"污渍"
+   （实机二分诊断实证：隐藏烟层后按钮即干净），彩色烟则是漂亮的液态光晕。 */
+.puff-6 {
+  --dur: 38s;
+  --bdur: 16s;
+  --delay: -30s;
+  /* breathe 动画会接管 opacity，这里用它自己的变量收窄呼吸区间 */
+  --omin: 0.24;
+  --omax: 0.45;
+  width: 26rem;
+  height: 19rem;
+  left: 22%;
+  top: 26%;
+  background: radial-gradient(circle at 50% 50%, rgb(255 255 255 / 0.08), transparent 72%);
+  opacity: 0.4;
+}
+/* 两缕小烟缕：体积小、周期短、行程大，是肉眼捕捉"烟雾在弥散"的锚点。
+   反向漂移（drift-rev）避免和大盘同向平移显得像整张背景在滑。 */
+.puff-7 {
+  --dur: 13s;
+  --bdur: 5s;
+  --delay: -4s;
+  width: 13rem;
+  height: 13rem;
+  left: 16%;
+  top: 58%;
+  background: radial-gradient(circle at 50% 50%, color-mix(in srgb, var(--smoke-a) 12%, transparent), transparent 70%);
+}
+.puff-8 {
+  --dur: 16s;
+  --bdur: 6s;
+  --delay: -9s;
+  width: 10rem;
+  height: 10rem;
+  right: 22%;
+  top: 12%;
+  background: radial-gradient(circle at 50% 50%, rgb(255 255 255 / 0.06), transparent 72%);
+}
+
+/* --------------------------------------------------------- 极光光带 */
+/* 除了"团状烟雾在弥散"，再补一层**方向性**的动态：几条斜向光带缓慢扫过。
+   两者叠加才不会显得整张背景只是同一团东西在呼吸 —— 光带提供"流动"的暗示，
+   烟团提供"浓度"的变化。同样只碰 transform / opacity，不触发重排重绘。 */
+.beam {
+  position: absolute;
+  top: -35%;
+  bottom: -35%;
+  width: 32rem;
+  opacity: 0.2;
+  pointer-events: none;
+  will-change: transform, opacity;
+  /* 扫动/呼吸同样移交 GSAP（见 SmokeField.vue） */
+}
+.beam-1 {
+  --sdur: 24s;
+  --sbdur: 11s;
+  --sdelay: -4s;
+  left: -14%;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--smoke-a) 32%, transparent), transparent);
+}
+.beam-2 {
+  --sdur: 37s;
+  --sbdur: 17s;
+  --sdelay: -21s;
+  left: 20%;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--smoke-b) 26%, transparent), transparent);
+}
+.beam-3 {
+  --sdur: 29s;
+  --sbdur: 13s;
+  --sdelay: -13s;
+  left: 52%;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--smoke-c) 20%, transparent), transparent);
+}
+
+/* 旧的 CSS keyframes（drift/drift-rev/sweep/breathe）已删除 —— 背景运动
+   统一由 GSAP 时间轴驱动（SmokeField.vue），避免两套动画系统叠加打架。 */
+
+/* 颗粒层：极淡噪点，破除渐变的塑料感，模拟烟雾里的杂质。
+   用内联 SVG 的 feTurbulence 生成，免去一张图片资源。 */
+.grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ------------------------------------------------------- 滚动条：整体取消 */
+/* 老大裁定：右侧滚动条（即便做成嵌入式细线）依然是画面上的一条异物 ——
+   取消滚动条，滚动位置改由页面顶部的 2.5px 进度条表达（App.vue）。
+   · 标准属性 scrollbar-width: none（Chromium 121+）+ WebKit 伪元素双保险，
+     任何滚动容器（主文档与内部滚动区）都不再出现滚动条；
+   · 宽度为 0 意味着滚动条永不占据布局空间，内容宽度恒定，
+     早年"滚动条出现/消失把应用横向挤动 8px"的问题从根上消失。 */
+* {
+  scrollbar-width: none;
+}
+::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+/* ------------------------------------------------------- 共享过渡片段 */
+/* 面板/卡片的通用入场：上浮 + 淡入 + 轻微缩放。配合 --delay 做错峰。 */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+}
+.rise {
+  animation: rise-in var(--t-slow) var(--ease-out-expo) backwards;
+  animation-delay: var(--delay, 0s);
+}
+
+/* 提示类元素的统一进出场（banner、内联消息、toast 共用同一体感） */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(28px) scale(0.94);
+  }
+}
+@keyframes toast-out {
+  to {
+    opacity: 0;
+    transform: translateX(20px) scale(0.96);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rise {
+    animation: none;
+  }
+  /* 主题切换也退化为直接呈现 */
+  :root {
+    transition: none;
+  }
+  /* 烟雾/光带的 GSAP 补间由 SmokeField 在 reduced-motion 下直接不启动 */
+}
