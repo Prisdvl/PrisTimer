@@ -9,9 +9,6 @@ jobs:
   rust-test:
     name: Rust tests (core + store)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -23,17 +20,12 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            pristimer-core/target
-            pristimer-store/target
-          key: rust-test-${{ runner.os }}-${{ hashFiles('pristimer-core/Cargo.lock', 'pristimer-store/Cargo.lock') }}
+            target
+          key: rust-test-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
 
-      - name: Test pristimer-core
-        working-directory: pristimer-core
-        run: cargo test --all-features
-
-      - name: Test pristimer-store
-        working-directory: pristimer-store
-        run: cargo test --all-features
+      # 顶层 Cargo workspace：单条命令跑全部成员
+      - name: Test pristimer-core + pristimer-store
+        run: cargo test -p pristimer-core -p pristimer-store --all-features
 
   rust-clippy:
     name: Clippy (core + store)
@@ -51,22 +43,16 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            pristimer-core/target
-            pristimer-store/target
-          key: clippy-${{ runner.os }}-${{ hashFiles('pristimer-core/Cargo.lock', 'pristimer-store/Cargo.lock') }}
+            target
+          key: clippy-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
 
-      # src-tauri 依赖 Tauri/Linux 系统库（webkit2gtk 等），在合并顶层
-      # workspace（P1）前仅对纯逻辑 crate 做 -D warnings 门禁
-      - name: Clippy pristimer-core
-        working-directory: pristimer-core
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Clippy pristimer-store
-        working-directory: pristimer-store
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      # -D warnings 门禁暂只覆盖纯逻辑 crate：src-tauri 依赖 Tauri/Linux
+      # 系统库（webkit2gtk 等），等 CI 加装系统依赖后再纳入
+      - name: Clippy core + store
+        run: cargo clippy -p pristimer-core -p pristimer-store --all-targets --all-features -- -D warnings
 
   frontend:
-    name: Frontend type-check
+    name: Frontend type-check + unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

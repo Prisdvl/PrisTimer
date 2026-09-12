@@ -48,20 +48,5 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
-
-# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
-[profile.release]
-codegen-units = 1
-lto = true
-opt-level = 3
-strip = true
-# 刻意**不设** `panic = "abort"`。
-#
-# 那是 Tauri 官方体积优化建议里的一条，但它把一个「局部错误」放大成「进程消失」：
-# 任何一次 panic（锁中毒、一次失败的文件写入、计时线程里的一处 unwrap）都会
-# 直接终结整个应用；而 GUI 子系统下 panic 信息写向不存在的 stderr ——
-# 用户看到的就是"用着用着窗口突然没了"，没有任何线索。
-#
-# 保持默认的 unwind 之后，命令里的 panic 会被 Tauri 的 invoke 层捕获并变成
-# 前端可见的错误，计时线程里的 panic 只挂掉那个线程。代价是二进制约 +5%，
-# 换来的是「出错可定位」而不是「静默蒸发」。
+# release 优化参数（[profile.release]）已上移到 workspace 根 Cargo.toml ——
+# workspace 下 profile 只能定义在根；完整注释（为何不设 panic="abort"）同址。
