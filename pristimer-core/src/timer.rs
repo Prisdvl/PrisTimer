@@ -232,8 +232,8 @@ mod tests {
     fn limit_change() {
         let mut t = new_stopwatch();
         // 场景1：Idle状态，可以修改limit
-        t.set_limit(Some((1000)));
-        assert_eq!(t.limit_ms(), Some((1000)));
+        t.set_limit(Some(1000));
+        assert_eq!(t.limit_ms(), Some(1000));
         // 场景2：Running状态，修改无效
         t.start();
         t.set_limit(Some(9999));

@@ -549,13 +549,13 @@ fn rename_tag_untouched_and_clear() {
     let totals = store.tag_totals_between("1970-01-01", "2999-12-31").unwrap();
     assert_eq!(totals.len(), 2);
     assert!(totals.iter().any(|t| t.tag == "英语"));
-    assert!(!totals.iter().any(|t| t.tag == ""));
+    assert!(!totals.iter().any(|t| t.tag.is_empty()));
 
     // 反向操作：把「英语」清空回未标注（to = None）
     let cleared = store.rename_tag("英语", None).unwrap();
     assert_eq!(cleared, 1);
     let totals = store.tag_totals_between("1970-01-01", "2999-12-31").unwrap();
-    let blank = totals.iter().find(|t| t.tag == "").unwrap();
+    let blank = totals.iter().find(|t| t.tag.is_empty()).unwrap();
     assert_eq!(blank.session_count, 1);
 }
 

@@ -1,8 +1,8 @@
 [package]
 name = "pristimer"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "PrisTimer — a glass-morphism focus timer for Windows with six themes, pomodoro mode and statistics"
+authors = ["Prisdvl"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

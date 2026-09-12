@@ -150,7 +150,7 @@ impl Store {
             // 先把 rusqlite 的错误统一成 StoreError，才能与 `from_conn` 串起来
             let opened = Connection::open(path)
                 .map_err(StoreError::from)
-                .and_then(|conn| Self::from_conn(conn));
+                .and_then(Self::from_conn);
             match opened {
                 Ok(store) => return Ok(store),
                 Err(err) => {

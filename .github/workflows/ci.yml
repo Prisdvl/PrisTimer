@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  rust-test:
+    name: Rust tests (core + store)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            pristimer-core/target
+            pristimer-store/target
+          key: rust-test-${{ runner.os }}-${{ hashFiles('pristimer-core/Cargo.lock', 'pristimer-store/Cargo.lock') }}
+
+      - name: Test pristimer-core
+        working-directory: pristimer-core
+        run: cargo test --all-features
+
+      - name: Test pristimer-store
+        working-directory: pristimer-store
+        run: cargo test --all-features
+
+  rust-clippy:
+    name: Clippy (core + store)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            pristimer-core/target
+            pristimer-store/target
+          key: clippy-${{ runner.os }}-${{ hashFiles('pristimer-core/Cargo.lock', 'pristimer-store/Cargo.lock') }}
+
+      # src-tauri 依赖 Tauri/Linux 系统库（webkit2gtk 等），在合并顶层
+      # workspace（P1）前仅对纯逻辑 crate 做 -D warnings 门禁
+      - name: Clippy pristimer-core
+        working-directory: pristimer-core
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Clippy pristimer-store
+        working-directory: pristimer-store
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  frontend:
+    name: Frontend type-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: vue-tsc --noEmit
+        run: npx vue-tsc --noEmit
+
+      - name: vitest
+        run: npm test
