@@ -4,6 +4,7 @@
 
 **液态玻璃质感的桌面专注计时器** · Tauri 2 + Rust + Vue 3
 
+[![CI](https://github.com/Prisdvl/PrisTimer/actions/workflows/ci.yml/badge.svg)](https://github.com/Prisdvl/PrisTimer/actions/workflows/ci.yml)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri&logoColor=white)](https://v2.tauri.app/)
 [![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Vue](https://img.shields.io/badge/Vue-3-4FC08D?logo=vue.js&logoColor=white)](https://vuejs.org/)
