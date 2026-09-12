@@ -28,8 +28,10 @@ const props = withDefaults(
     paused?: boolean;
     /** 当前主题（App 的主题色板驱动）。 */
     theme?: BgTheme;
+    /** 计时进行中：背景整体提速（世界跟着专注呼吸加快）。 */
+    active?: boolean;
   }>(),
-  { paused: false, theme: "deep" },
+  { paused: false, theme: "deep", active: false },
 );
 
 const root = ref<HTMLElement | null>(null);
@@ -49,6 +51,13 @@ function setPaused(on: boolean): void {
   for (const t of baseTweens) (on ? t.pause() : t.resume());
   for (const t of fxTweens) (on ? t.pause() : t.resume());
   if (meteorCall) (on ? meteorCall.pause() : meteorCall.resume());
+}
+
+/** 状态联动：计时运行时整体提速 1.5x（idle/暂停回落 1x）。只改速率不改相位。 */
+function setActivity(active: boolean): void {
+  const s = active ? 1.5 : 1;
+  for (const t of baseTweens) t.timeScale(s);
+  for (const t of fxTweens) t.timeScale(s);
 }
 
 /** 页面隐藏（最小化/切走）时冻结；恢复可见且未被外部门控时继续。 */
@@ -116,34 +125,39 @@ function genStars(): void {
   }));
 }
 
-/** 虚空流星：随机起点划过左下，亮尾渐隐；4–10s 一颗，递归调度。 */
+/** 虚空流星：随机起点划过左下，亮尾渐隐；2.5–6s 一颗，15% 概率双发。 */
 function spawnMeteor(): void {
   const layer = meteorLayer.value;
   if (!layer) return;
-  const el = document.createElement("span");
-  el.className = "meteor";
-  el.style.left = `${(18 + Math.random() * 72).toFixed(1)}%`;
-  el.style.top = `${(4 + Math.random() * 34).toFixed(1)}%`;
-  layer.appendChild(el);
-  gsap.fromTo(
-    el,
-    { x: 0, y: 0, opacity: 0, rotation: 148 },
-    {
-      x: -240 - Math.random() * 120,
-      y: 150 + Math.random() * 80,
-      opacity: 1,
-      duration: 0.55,
-      ease: "power2.out",
-      onComplete: () => {
-        gsap.to(el, { opacity: 0, duration: 0.3, onComplete: () => el.remove() });
+  const launch = (delay = 0): void => {
+    const el = document.createElement("span");
+    el.className = "meteor";
+    el.style.left = `${(18 + Math.random() * 72).toFixed(1)}%`;
+    el.style.top = `${(4 + Math.random() * 34).toFixed(1)}%`;
+    layer.appendChild(el);
+    gsap.fromTo(
+      el,
+      { x: 0, y: 0, opacity: 0, rotation: 148 },
+      {
+        x: -240 - Math.random() * 120,
+        y: 150 + Math.random() * 80,
+        opacity: 1,
+        duration: 0.55,
+        delay,
+        ease: "power2.out",
+        onComplete: () => {
+          gsap.to(el, { opacity: 0, duration: 0.3, onComplete: () => el.remove() });
+        },
       },
-    },
-  );
+    );
+  };
+  launch();
+  if (Math.random() < 0.15) launch(0.22);
 }
 
 function scheduleMeteor(): void {
   meteorCall?.kill();
-  meteorCall = gsap.delayedCall(4 + Math.random() * 6, () => {
+  meteorCall = gsap.delayedCall(2.5 + Math.random() * 3.5, () => {
     spawnMeteor();
     scheduleMeteor();
   });
@@ -200,6 +214,8 @@ async function buildThemeFx(): Promise<void> {
   // 虚空流星：reduced-motion 不调度（星尘的 CSS 闪烁也由媒体查询关掉）
   if (props.theme === "void" && !reduced()) scheduleMeteor();
 
+  // 重建后保持当前活跃度（计时进行中 = 1.5x）
+  setActivity(props.active);
   if (props.paused || document.hidden) setPaused(true);
 }
 
@@ -211,6 +227,14 @@ watch(
   },
 );
 
+// 状态联动：开始/暂停计时 → 背景呼吸整体加速/回落（速率切换，相位不跳）
+watch(
+  () => props.active,
+  (on) => {
+    if (!reduced()) setActivity(on);
+  },
+);
+
 onMounted(() => {
   const el = root.value;
   if (!el) return;
@@ -219,10 +243,22 @@ onMounted(() => {
   // reduced-motion：一套补间都不建，元素停在 from 帧静态呈现
   if (!reduced()) {
     el.querySelectorAll<HTMLElement>(".puff").forEach(animatePuff);
+    // 全屏明暗脉动：一层 --ink 派生的薄纱呼吸（深色=白雾，晨雾=云影）
+    const pulse = el.querySelector<HTMLElement>(".fx-pulse");
+    if (pulse) {
+      const breathe = gsap.fromTo(
+        pulse,
+        { opacity: 0.25 },
+        { opacity: 0.9, duration: 13, ease: "sine.inOut" },
+      );
+      breathe.repeat(-1).yoyo(true);
+      baseTweens.push(breathe);
+    }
     void buildThemeFx();
     document.addEventListener("visibilitychange", onVisibility);
     // 初始就是迷你形态（上次退出时收成了组件）：直接停在冻结态
     if (props.paused) setPaused(true);
+    setActivity(props.active);
   }
 });
 
@@ -240,12 +276,13 @@ onUnmounted(() => {
   <div ref="root" class="smoke" aria-hidden="true">
     <span v-for="n in 8" :key="`p${n}`" class="puff" :class="`puff-${n}`" />
 
-    <!-- 深空：斜向光带 -->
+    <!-- 深空：斜向光带 + 冷色光尘 -->
     <Transition name="layerfade">
       <div v-if="theme === 'deep'" class="fx">
         <span class="beam beam-1" />
         <span class="beam beam-2" />
         <span class="beam beam-3" />
+        <ParticleField :count="18" :speed="0.22" rgb="150,170,255" :alpha="0.7" />
       </div>
     </Transition>
 
@@ -262,12 +299,13 @@ onUnmounted(() => {
       </div>
     </Transition>
 
-    <!-- 极光：纵向光幕 -->
+    <!-- 极光：纵向光幕 + 绿青光尘 -->
     <Transition name="layerfade">
       <div v-if="theme === 'aurora'" class="fx">
         <span class="curtain c1" />
         <span class="curtain c2" />
         <span class="curtain c3" />
+        <ParticleField :count="16" :speed="0.26" rgb="120,255,200" :alpha="0.6" />
       </div>
     </Transition>
 
@@ -277,6 +315,9 @@ onUnmounted(() => {
         <ParticleField :count="26" :speed="0.3" rgb="255,226,180" :alpha="0.85" />
       </div>
     </Transition>
+
+    <!-- 全屏明暗脉动：--ink 派生薄纱（深色主题=白雾律动，晨雾=云影掠过） -->
+    <span class="fx-pulse" />
 
     <span class="grain" />
   </div>
@@ -296,6 +337,20 @@ onUnmounted(() => {
 .layerfade-enter-from,
 .layerfade-leave-to {
   opacity: 0;
+}
+
+/* 全屏明暗脉动层：颜色从 --ink 派生 —— 深色主题下是顶部白雾缓缓明暗，
+   晨雾下 ink 是暗色，同一份代码自动变成"云影掠过"。opacity 由 GSAP 驱动。 */
+.fx-pulse {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    62% 46% at 50% 6%,
+    color-mix(in srgb, var(--ink) 8%, transparent),
+    transparent 72%
+  );
+  opacity: 0.25;
+  will-change: opacity;
 }
 
 /* 虚空星尘 */

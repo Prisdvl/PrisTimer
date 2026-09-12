@@ -96,6 +96,11 @@
   inherits: true;
   initial-value: rgb(255 255 255 / 0.18);
 }
+@property --sheen-c {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(255 255 255 / 0.13);
+}
 
 :root {
   /* 缓动曲线：easings.net 标准集，全应用统一引用 */
@@ -118,7 +123,9 @@
   --ink-faint: #6b7280;
 
   /* 玻璃：半透明面板 + 高光边 + 投影，三件套缺一不可 ——
-     只有背景模糊会显得"糊"，加上顶部 1px 高光才有玻璃的厚度 */
+     只有背景模糊会显得"糊"，加上顶部 1px 高光才有玻璃的厚度。
+     第 19 轮起 edge 升级为四向：顶部主高光 + 左右缘细高光 + 底部内侧
+     折射暗影，玻璃从"贴片"变成"有厚度的板"。 */
   --glass-bg: rgb(255 255 255 / 0.05);
   --glass-bg-strong: rgb(255 255 255 / 0.09);
   --glass-bg-deep: rgb(10 13 18 / 0.44);
@@ -126,10 +133,23 @@
   --glass-border-strong: rgb(255 255 255 / 0.18);
   --glass-blur: blur(18px) saturate(1.45);
   --glass-blur-lg: blur(30px) saturate(1.6);
-  --glass-edge: inset 0 1px 0 rgb(255 255 255 / 0.075);
+  --glass-edge:
+    inset 0 1px 0 rgb(255 255 255 / 0.1),
+    inset 1px 0 0 rgb(255 255 255 / 0.04),
+    inset -1px 0 0 rgb(255 255 255 / 0.04),
+    inset 0 -6px 14px rgb(0 0 0 / 0.1);
+  --glass-edge-strong:
+    inset 0 1px 0 rgb(255 255 255 / 0.17),
+    inset 1px 0 0 rgb(255 255 255 / 0.06),
+    inset -1px 0 0 rgb(255 255 255 / 0.06),
+    inset 0 -8px 18px rgb(0 0 0 / 0.13);
   --glass-edge-soft: inset 0 1px 0 rgb(255 255 255 / 0.045);
-  --glass-shadow: 0 10px 30px rgb(0 0 0 / 0.26);
-  --glass-shadow-lg: 0 20px 60px rgb(0 0 0 / 0.4);
+  --glass-shadow: 0 12px 32px rgb(0 0 0 / 0.28);
+  --glass-shadow-lg: 0 22px 64px rgb(0 0 0 / 0.42);
+  /* 环境色边缘光：玻璃"吸收"强调色，盘面/数字窗的一圈微光随状态变色 */
+  --glass-rim: inset 0 0 0 1px color-mix(in srgb, var(--accent) 9%, transparent);
+  /* 镜面扫光的高光色（浅色主题下换冷蓝灰才有对比） */
+  --sheen-c: rgb(255 255 255 / 0.13);
 
   /* 强调色由 App 按计时状态注入（--accent），这里给一个兜底 */
   --accent: #3ecf8e;
@@ -209,6 +229,7 @@
   --glass-bg-deep: rgb(28 40 60 / 0.1);
   --glass-border: rgb(30 42 64 / 0.14);
   --glass-border-strong: rgb(30 42 64 / 0.26);
+  --sheen-c: rgb(96 134 196 / 0.3);
 }
 
 /* 极光：绿青底色的夜林上空，烟团是缓缓漂移的极光帷幕（特色动效在
@@ -264,7 +285,7 @@
   box-shadow: var(--glass-edge), var(--glass-shadow-lg);
 }
 
-/* 可交互玻璃：悬停微抬 + 描边变亮，按下回弹。整个应用共用一套手感。 */
+/* 可交互玻璃：悬停微抬 + 描边变亮 + 边缘光增强，按下回弹。整个应用共用一套手感。 */
 .glass-interactive {
   transition:
     transform var(--t-base) var(--ease-out-back),
@@ -276,11 +297,52 @@
 .glass-interactive:hover:not(:disabled) {
   border-color: var(--glass-border-strong);
   background: var(--glass-bg-strong);
-  transform: translateY(-1px);
+  box-shadow: var(--glass-edge-strong), var(--glass-shadow);
+  transform: translateY(-2px);
 }
 .glass-interactive:active:not(:disabled) {
   transform: scale(0.97);
   transition-duration: var(--t-fast);
+}
+
+/* 镜面扫光：一道高光斜掠过玻璃面板，像光从玻璃表面滑过。
+   · 挂在要"表演"的大面板上（.clock-window、统计卡），小控件挂了会吵；
+   · ::after 铺在内容之上（pointer-events:none 不挡交互），overflow:hidden
+     由本类负责 —— 挂载点若依赖可见溢出（下拉/悬浮层）不要挂；
+   · 11s 循环里只有前 1.5s 在掠过，其余时间停在屏外等待 —— 高频但不聒噪；
+   · 高光色走 --sheen-c（已注册 <color>）：晨雾下自动换冷蓝灰，扫光才可见。 */
+.sheen {
+  position: relative;
+  overflow: hidden;
+}
+.sheen::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  z-index: 2;
+  pointer-events: none;
+  background: linear-gradient(
+    105deg,
+    transparent 40%,
+    color-mix(in srgb, var(--sheen-c) 55%, transparent) 47%,
+    var(--sheen-c) 50%,
+    color-mix(in srgb, var(--sheen-c) 55%, transparent) 53%,
+    transparent 60%
+  );
+  transform: translateX(-130%) skewX(-8deg);
+  animation: sheen-sweep 11s var(--ease-in-out-soft) infinite;
+  will-change: transform;
+}
+@keyframes sheen-sweep {
+  0% {
+    transform: translateX(-130%) skewX(-8deg);
+  }
+  16% {
+    transform: translateX(130%) skewX(-8deg);
+  }
+  100% {
+    transform: translateX(130%) skewX(-8deg);
+  }
 }
 
 /* --------------------------------------------------------- 3. 全局重置 */
@@ -532,6 +594,11 @@ body {
   /* 主题切换也退化为直接呈现 */
   :root {
     transition: none;
+  }
+  /* 镜面扫光停驻在屏外（元素保持素面） */
+  .sheen::after {
+    animation: none;
+    content: none;
   }
   /* 烟雾/光带的 GSAP 补间由 SmokeField 在 reduced-motion 下直接不启动 */
 }

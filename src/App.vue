@@ -1203,7 +1203,7 @@ onUnmounted(() => {
 
 <template>
   <div class="app" :class="{ meditating: meditation }" :style="{ '--accent': accent }">
-    <SmokeField :paused="mini" :theme="theme" />
+    <SmokeField :paused="mini" :theme="theme" :active="isRunning" />
     <!-- 顶部滚动进度条：替代已取消的右侧滚动条（fixed 于窗口顶缘） -->
     <span
       class="scroll-progress"
@@ -1328,7 +1328,7 @@ onUnmounted(() => {
               :state="snapshot.state"
             >
               <div class="readout">
-                <div class="clock-window">
+                <div class="clock-window sheen">
                   <p class="clock" :class="{ long: isLongFormat }" :aria-label="display">
                     <!-- 逐位渲染：每个字符占一个固定宽度的槽，槽内换值时上下翻页。
                          不用 out-in 模式（那会先清空再进场，每秒闪一次）；
@@ -1952,8 +1952,11 @@ onUnmounted(() => {
     linear-gradient(165deg, rgb(255 255 255 / 0.05), transparent 55%),
     var(--glass-bg-deep); /* 主题感知：晨雾下是浅玻璃，不再是发闷的深色胶囊 */
   border: 1px solid rgb(255 255 255 / 0.07);
+  /* 第 19 轮：accent 环境色边缘光 —— 玻璃吸收状态色（专注绿/休息蓝紫），
+     一圈 1px 微光实时跟随 --accent 插值，盘面像从内部透出光。 */
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.07),
+    0 0 0 1px color-mix(in srgb, var(--accent) 9%, transparent),
     0 4px 18px rgb(0 0 0 / 0.28);
   backdrop-filter: blur(9px) saturate(1.25);
 }

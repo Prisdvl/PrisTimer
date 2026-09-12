@@ -557,7 +557,7 @@ async function exportReport(): Promise<void> {
       <article
         v-for="card in 4"
         :key="card"
-        class="card"
+        class="card sheen"
         :style="{ animationDelay: `${(card - 1) * 60}ms` }"
       >
         <template v-if="card === 1">
