@@ -176,8 +176,8 @@ onUnmounted(() => unlisten?.());
   align-items: center;
   height: 38px;
   padding-left: 0.85rem;
-  /* 玻璃条：只描下边，避免四条边把窗口切成方块 */
-  background: rgb(255 255 255 / 0.035);
+  /* 玻璃条：只描下边，避免四条边把窗口切成方块（墨色派生，浅色主题下同样成立） */
+  background: color-mix(in srgb, var(--ink) 3.5%, transparent);
   border-bottom: 1px solid var(--glass-border);
   backdrop-filter: var(--glass-blur);
 }
@@ -222,11 +222,11 @@ onUnmounted(() => unlisten?.());
     color var(--t-fast) ease;
 }
 .wbtn:hover {
-  background: rgb(255 255 255 / 0.08);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
   color: var(--ink);
 }
 .wbtn:active {
-  background: rgb(255 255 255 / 0.04);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
 }
 .wbtn.danger:hover {
   background: #c0392b;

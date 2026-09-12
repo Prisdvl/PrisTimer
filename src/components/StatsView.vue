@@ -856,7 +856,7 @@ async function exportReport(): Promise<void> {
     background 0.25s ease;
 }
 .card:hover {
-  border-color: rgb(255 255 255 / 0.16);
+  border-color: color-mix(in srgb, var(--ink) 16%, transparent);
   background: var(--glass-bg-strong, rgb(255 255 255 / 0.08));
   transform: translateY(-3px);
 }
@@ -1018,7 +1018,7 @@ async function exportReport(): Promise<void> {
 }
 .goals-toggle:hover {
   color: var(--ink-soft);
-  border-color: rgb(255 255 255 / 0.16);
+  border-color: color-mix(in srgb, var(--ink) 16%, transparent);
 }
 .goals-toggle.active {
   color: var(--accent, #3ecf8e);
@@ -1160,7 +1160,7 @@ li.done .tag-name {
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: rgb(255 255 255 / 0.09);
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
   transition: background 0.3s ease, box-shadow 0.3s ease;
 }
 .goal-dots i.on {
@@ -1239,7 +1239,7 @@ li.done .tag-name {
 }
 .row-edit:hover {
   color: var(--accent, #3ecf8e);
-  background: rgb(255 255 255 / 0.06);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 .rename-panel {
   margin-top: 0.75rem;
@@ -1288,7 +1288,7 @@ li.done .tag-name {
   display: block;
   height: 10px;
   border-radius: 999px;
-  background: rgb(255 255 255 / 0.05);
+  background: color-mix(in srgb, var(--ink) 5.5%, transparent);
   overflow: hidden;
 }
 .tag-bar {

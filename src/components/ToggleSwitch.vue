@@ -31,7 +31,7 @@ const emit = defineEmits<{ "update:modelValue": [value: boolean] }>();
   padding: 0;
   border: none;
   border-radius: 12px;
-  background: rgb(255 255 255 / 0.1);
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
   box-shadow: inset 0 2px 6px rgb(0 0 0 / 0.3);
   cursor: pointer;
   transition: background var(--t-base) ease;
