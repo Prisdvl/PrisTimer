@@ -101,6 +101,39 @@
   inherits: true;
   initial-value: rgb(255 255 255 / 0.13);
 }
+/* 第 20 轮：指针/刻度主题化 —— 四主题各配一套表盘前景色，
+   注册 <color> 后随 :root 过渡一起丝滑插值（指针 fill 过渡由
+   AnalogDial 自己的 0.45s 承担，这里保证的是「切主题」那一刻）。 */
+@property --hand-idle {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #4a5160;
+}
+@property --hand-rest {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #6a7382;
+}
+@property --hand-paused {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #e8b64c;
+}
+@property --hand-finished {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #5aa7ff;
+}
+@property --tick {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(255 255 255 / 0.14);
+}
+@property --tick-strong {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgb(255 255 255 / 0.3);
+}
 
 :root {
   /* 缓动曲线：easings.net 标准集，全应用统一引用 */
@@ -154,6 +187,21 @@
   /* 强调色由 App 按计时状态注入（--accent），这里给一个兜底 */
   --accent: #3ecf8e;
 
+  /* 表盘前景（指针/刻度）：四主题各配一套，保证辨识度 ——
+     · deep 深空：冷钢蓝灰（出厂值，dark bg 上的中性灰原方案）；
+     · void 虚空：提亮一档的银灰 —— 纯黑底上 #4a5160 会隐身；
+     · dawn 晨雾：翻成深墨蓝/暗琥珀/深钴蓝 —— 浅底上亮色全灭；
+     · aurora 极光：青灰偏绿，与极光帷幕同语系。
+     --dial-particle（表盘粒子取色）不注册 <color>：canvas 端要读
+     原始 hex 解析，注册后 computed 值会变成序列化色值，解析反而脆。 */
+  --hand-idle: #4a5160;
+  --hand-rest: #6a7382;
+  --hand-paused: #e8b64c;
+  --hand-finished: #5aa7ff;
+  --tick: rgb(255 255 255 / 0.14);
+  --tick-strong: rgb(255 255 255 / 0.3);
+  --dial-particle: #a8b6ff;
+
   --radius-sm: 8px;
   --radius: 12px;
   --radius-lg: 18px;
@@ -192,7 +240,13 @@
     --glass-bg-strong 0.9s var(--ease-in-out-soft),
     --glass-bg-deep 0.9s var(--ease-in-out-soft),
     --glass-border 0.9s var(--ease-in-out-soft),
-    --glass-border-strong 0.9s var(--ease-in-out-soft);
+    --glass-border-strong 0.9s var(--ease-in-out-soft),
+    --hand-idle 0.9s var(--ease-in-out-soft),
+    --hand-rest 0.9s var(--ease-in-out-soft),
+    --hand-paused 0.9s var(--ease-in-out-soft),
+    --hand-finished 0.9s var(--ease-in-out-soft),
+    --tick 0.9s var(--ease-in-out-soft),
+    --tick-strong 0.9s var(--ease-in-out-soft);
 }
 
 /* ---------------------------------------------------------------- 主题集 */
@@ -208,6 +262,13 @@
   --bg-a: #060709;
   --bg-b: #030304;
   --bg-c: #010102;
+  --hand-idle: #596172;
+  --hand-rest: #9aa3b8;
+  --hand-paused: #f0c464;
+  --hand-finished: #6cb4ff;
+  --tick: rgb(255 255 255 / 0.17);
+  --tick-strong: rgb(255 255 255 / 0.38);
+  --dial-particle: #d4daf5;
 }
 
 /* 晨雾（浅色）：雾蓝白的日间底色，墨色翻暗、玻璃换向（白底高透 +
@@ -230,6 +291,13 @@
   --glass-border: rgb(30 42 64 / 0.14);
   --glass-border-strong: rgb(30 42 64 / 0.26);
   --sheen-c: rgb(96 134 196 / 0.3);
+  --hand-idle: #5a6780;
+  --hand-rest: #3a4356;
+  --hand-paused: #a9781f;
+  --hand-finished: #2e6fc0;
+  --tick: rgb(30 42 64 / 0.2);
+  --tick-strong: rgb(30 42 64 / 0.42);
+  --dial-particle: #5670a8;
 }
 
 /* 极光：绿青底色的夜林上空，烟团是缓缓漂移的极光帷幕（特色动效在
@@ -242,6 +310,13 @@
   --bg-a: #0a1512;
   --bg-b: #061010;
   --bg-c: #030a08;
+  --hand-idle: #4d6257;
+  --hand-rest: #9cbcae;
+  --hand-paused: #e8b64c;
+  --hand-finished: #6fc3ff;
+  --tick: rgb(230 255 244 / 0.16);
+  --tick-strong: rgb(230 255 244 / 0.34);
+  --dial-particle: #78f0be;
 }
 
 /* liquid-glass 按钮质感（对齐 shuding/liquid-glass 的容器特征）：

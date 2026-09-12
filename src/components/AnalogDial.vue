@@ -16,12 +16,17 @@
 import { computed, ref, watch } from "vue";
 import DialParticles from "./DialParticles.vue";
 
+/** 主题标识：透传给表盘粒子取色（App 的主题色板驱动）。 */
+export type DialTheme = "deep" | "void" | "dawn" | "aurora";
+
 const props = defineProps<{
   /** 已进行的毫秒数（倒计时取 limit - remaining）。 */
   elapsedMs: number;
   /** 倒计时进度 0–1；正计时传 null（无目标，不画弧）。 */
   progress: number | null;
   state: "idle" | "running" | "paused" | "finished";
+  /** 当前背景主题（第 20 轮起指针/粒子随主题换色）。 */
+  theme?: DialTheme;
 }>();
 
 /** 表盘粒子容器：计时运行时盘内粒子飘动（时间即文字，盘即容器）。 */
@@ -124,8 +129,9 @@ watch(minutes, (now, prev) => {
     </svg>
 
     <!-- 粒子容器：运行时粒子在盘内漂移连线（在刻度之上、盘心读数之下，
-         不与指针/文字抢焦点；颜色继承 --accent 跟随状态） -->
-    <DialParticles :active="particlesOn" />
+         不与指针/文字抢焦点；第 20 轮起取色随主题而非状态 —— 状态色
+         交给边框/弧/呼吸光承担，粒子负责"这个主题长这样"） -->
+    <DialParticles :active="particlesOn" :theme="theme" />
 
     <!-- 盘心读数由父组件注入（它负责数字补间动画） -->
     <div class="core">
@@ -150,7 +156,7 @@ watch(minutes, (now, prev) => {
     linear-gradient(158deg, rgb(255 255 255 / 0.055), transparent 42%),
     radial-gradient(circle at 50% 118%, rgb(255 255 255 / 0.035), transparent 60%),
     rgb(255 255 255 / 0.022);
-  border: 1px solid rgb(255 255 255 / 0.085);
+  border: 1px solid var(--glass-border);
   backdrop-filter: var(--glass-blur-lg);
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.09),
@@ -176,13 +182,14 @@ watch(minutes, (now, prev) => {
 
 /* ------------------------------------------------------------------ 刻度 */
 .tick {
-  stroke: rgb(255 255 255 / 0.14);
+  /* 第 20 轮：白色固定值换主题令牌 —— 晨雾浅底上白刻度原本不可见 */
+  stroke: var(--tick);
   stroke-width: 1.4;
   stroke-linecap: round;
   transition: stroke 0.5s ease;
 }
 .tick.major {
-  stroke: rgb(255 255 255 / 0.3);
+  stroke: var(--tick-strong);
   stroke-width: 2.2;
 }
 .running .tick.major {
@@ -201,7 +208,8 @@ watch(minutes, (now, prev) => {
   transition: none;
 }
 .hand-body {
-  fill: #6a7382;
+  /* 第 20 轮：四态指针色全部主题化（--hand-* 令牌，随主题丝滑插值） */
+  fill: var(--hand-rest);
   transition: fill 0.45s ease, filter 0.45s ease;
 }
 .running .hand-body {
@@ -209,14 +217,14 @@ watch(minutes, (now, prev) => {
   filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 55%, transparent));
 }
 .paused .hand-body {
-  fill: #e8b64c;
+  fill: var(--hand-paused);
 }
 .finished .hand-body {
-  fill: #5aa7ff;
+  fill: var(--hand-finished);
 }
 /* 停住时指针略微变细变暗，视觉上"松开了" */
 .idle .hand-body {
-  fill: #4a5160;
+  fill: var(--hand-idle);
 }
 
 /* 小时针比秒针短粗，两者色相相同、明度上略作区分 */
@@ -248,7 +256,7 @@ watch(minutes, (now, prev) => {
   stroke-linecap: round;
 }
 .arc-track {
-  stroke: rgb(255 255 255 / 0.07);
+  stroke: color-mix(in srgb, var(--tick-strong) 28%, transparent);
 }
 .arc {
   stroke: var(--accent);

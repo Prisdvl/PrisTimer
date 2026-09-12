@@ -9,17 +9,23 @@
 //   2. 生命周期严格跟随计时状态：仅 running 时推进 rAF，暂停/空闲即冻结
 //      并淡出 —— 氛围动画不为静止的界面持续烧 GPU。
 //
-// 颜色取自继承的 --accent（专注绿 / 休息蓝紫 / 暂停琥珀自动跟随）。
-// 绘制只碰 canvas 2D，不碰 DOM 布局；DPR 上限 2，粒子 34 颗 + O(n²) 连线
-// 在 330px 盘面上每帧 <0.3ms（实测 r16 同量级画布）。
+// 颜色随背景主题（第 20 轮）：theme prop → THEME_RGB 查表。不再继承
+// --accent（那是状态色，四主题下无差别）；主题辨识度交给粒子本体，
+// 状态信息由盘框/弧/呼吸光的 accent 承担。绘制只碰 canvas 2D，
+// 不碰 DOM 布局；DPR 上限 2，粒子 34 颗 + O(n²) 连线在 330px 盘面上
+// 每帧 <0.3ms（实测 r16 同量级画布）。
 // ---------------------------------------------------------------------------
 
 import { onMounted, onUnmounted, ref, watch } from "vue";
+
+export type ParticleTheme = "deep" | "void" | "dawn" | "aurora";
 
 const props = withDefaults(
   defineProps<{
     /** 是否激活（计时运行中）。false 时冻结并淡出。 */
     active: boolean;
+    /** 当前背景主题（决定粒子颜色）。 */
+    theme?: ParticleTheme;
     /** 粒子数量。 */
     count?: number;
     /** 速度倍率（px/帧 @60fps 的基准 0.5）。 */
@@ -27,7 +33,7 @@ const props = withDefaults(
     /** 连线距离（px）。 */
     link?: number;
   }>(),
-  { count: 34, speed: 1, link: 62 },
+  { theme: "deep", count: 34, speed: 1, link: 62 },
 );
 
 const canvas = ref<HTMLCanvasElement | null>(null);
@@ -48,23 +54,30 @@ let ctx: CanvasRenderingContext2D | null = null;
 let ro: ResizeObserver | null = null;
 let w = 0;
 let h = 0;
-/** 继承到的强调色，rgb 三元组字符串。 */
-let rgb = "62,207,142";
 
-/** hex → "r,g,b"。--accent 是纯 hex（#3ecf8e 等），解析失败走兜底绿。 */
-function parseAccent(raw: string): string {
-  const m = raw.trim().match(/^#([0-9a-f]{6})$/i);
-  if (!m) return "62,207,142";
-  const n = Number.parseInt(m[1], 16);
-  return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+/** 四主题粒子色板（rgb 三元组）：与 glass.css 的 --dial-particle 同源。
+ *  · deep 深空：靛蓝星光；void 虚空：银白提亮（纯黑底上要亮）；
+ *  · dawn 晨雾：墨蓝压暗（浅底上亮色全灭）；aurora 极光：春绿同帷幕。 */
+const THEME_RGB: Record<ParticleTheme, string> = {
+  deep: "168,182,255",
+  void: "212,218,245",
+  dawn: "86,112,168",
+  aurora: "120,240,190",
+};
+
+/** 当前主题的粒子色，rgb 三元组字符串。 */
+let rgb = THEME_RGB.deep;
+
+function applyTheme(t: ParticleTheme): void {
+  rgb = THEME_RGB[t] ?? THEME_RGB.deep;
 }
 
-function readAccent(): void {
-  const el = canvas.value;
-  if (!el) return;
-  const v = getComputedStyle(el).getPropertyValue("--accent");
-  if (v) rgb = parseAccent(v);
-}
+watch(
+  () => props.theme,
+  (t) => {
+    applyTheme(t);
+  },
+);
 
 /** 按容器实际尺寸 × DPR 建画布；圆形容器的有效半径 = 短边一半 - 边距。 */
 function resize(): void {
@@ -184,10 +197,7 @@ function onVisibility(): void {
 watch(
   () => props.active,
   (on) => {
-    if (on) {
-      readAccent();
-      if (pts.length === 0) seed();
-    }
+    if (on && pts.length === 0) seed();
     visible.value = on;
     sync();
   },
@@ -202,7 +212,6 @@ onMounted(() => {
   if (!reduced) document.addEventListener("visibilitychange", onVisibility);
   // 初始就处于 running（启动恢复的会话）：直接播种 + 淡入
   if (props.active) {
-    readAccent();
     seed();
     visible.value = true;
     if (!reduced) sync();

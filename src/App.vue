@@ -1326,6 +1326,7 @@ onUnmounted(() => {
               :elapsed-ms="dialElapsedMs"
               :progress="ARC_PROGRESS"
               :state="snapshot.state"
+              :theme="theme"
             >
               <div class="readout">
                 <div class="clock-window sheen">
