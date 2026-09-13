@@ -1,6 +1,6 @@
 [package]
 name = "pristimer"
-version = "0.2.0"
+version = "0.3.0"
 description = "PrisTimer — a glass-morphism focus timer for Windows with six themes, pomodoro mode and statistics"
 authors = ["Prisdvl"]
 edition = "2021"
