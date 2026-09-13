@@ -67,5 +67,8 @@
 - 前端 vitest 14 例（date / tags / useCountUp）；Rust 测试 50 例
 - 顶层 Cargo workspace（core / store / src-tauri 统一 lock 与 target）
 
-[Unreleased]: https://github.com/Prisdvl/PrisTimer/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Prisdvl/PrisTimer/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/Prisdvl/PrisTimer/releases/tag/v0.3.1
+[0.3.0]: https://github.com/Prisdvl/PrisTimer/releases/tag/v0.3.0
+[0.2.0]: https://github.com/Prisdvl/PrisTimer/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Prisdvl/PrisTimer/releases/tag/v0.1.0
