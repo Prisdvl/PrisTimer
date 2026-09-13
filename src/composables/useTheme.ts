@@ -1,12 +1,18 @@
 // ---------------------------------------------------------------------------
-// 背景主题（六主题）+ 底部主题菜单。
+// 背景主题（六主题）。
 //
-// 从 App.vue 抽出的纯逻辑（P1-⑤ 第一步，不改行为）：切换只换 data-theme +
-// 一组 CSS 变量（@property 注册过，0.9s 平滑插值），特色动效层由 SmokeField
-// 按 theme 交叉换景。持久化走 localStorage（pristimer.theme）。
+// P1-⑤ 第二步起改为**模块级单例**（与 useToast 同款理由）：主题是跨层级
+// 的横切状态 —— App 的 SmokeField/AnalogDial 吃 theme，底部菜单组件
+// ThemeMenu 直接消费 THEMES/pickTheme，若每个调用方各建一份 ref，
+// 菜单里点选就不会传导到背景层。模块级 ref = 全局唯一一份，恰好是
+// 主题想要的语义。菜单的开合/外点关闭是纯 UI 态，归 ThemeMenu 组件私有。
+//
+// 切换只换 data-theme + 一组 CSS 变量（@property 注册过，0.9s 平滑插值），
+// 特色动效层由 SmokeField 按 theme 交叉换景。持久化走 localStorage
+// （pristimer.theme）。
 // ---------------------------------------------------------------------------
 
-import { computed, ref, useTemplateRef, watch } from "vue";
+import { computed, ref, watch } from "vue";
 
 export type BgTheme = "deep" | "void" | "dawn" | "aurora" | "ember" | "paper";
 
@@ -28,57 +34,43 @@ function loadTheme(): BgTheme {
   return "deep";
 }
 
+// ---- 模块级单例状态 -------------------------------------------------------
+
+const theme = ref<BgTheme>(loadTheme());
+
+const currentThemeLabel = computed(
+  () => THEMES.find((t) => t.id === theme.value)?.label ?? "深空",
+);
+const currentThemeSwatch = computed(
+  () => THEMES.find((t) => t.id === theme.value)?.swatch ?? "",
+);
+
+function pickTheme(id: BgTheme): void {
+  theme.value = id;
+}
+
+function syncTheme(): void {
+  document.documentElement.setAttribute("data-theme", theme.value);
+}
+
+watch(theme, (t) => {
+  try {
+    localStorage.setItem(THEME_KEY, t);
+  } catch {
+    /* 写不进去就本次会话生效 */
+  }
+  syncTheme();
+});
+
+// ---- 消费入口（多次调用返回同一份状态）------------------------------------
+
 export function useTheme() {
-  const theme = ref<BgTheme>(loadTheme());
-  const currentThemeLabel = computed(
-    () => THEMES.find((t) => t.id === theme.value)?.label ?? "深空",
-  );
-  const currentThemeSwatch = computed(
-    () => THEMES.find((t) => t.id === theme.value)?.swatch ?? "",
-  );
-
-  /** 底部主题菜单（第 21 轮：主题键从裸色点升级为底部菜单 + 弹出面板）。
-   *  useTemplateRef：模板里 ref="themeCtlRoot" 按名字绑进来，App 无需中转。 */
-  const themeMenuOpen = ref(false);
-  const themeCtlRoot = useTemplateRef<HTMLElement>("themeCtlRoot");
-
-  function pickTheme(id: BgTheme): void {
-    theme.value = id;
-    themeMenuOpen.value = false;
-  }
-
-  function onGlobalPointerDown(e: PointerEvent): void {
-    if (!themeMenuOpen.value) return;
-    if (themeCtlRoot.value && !themeCtlRoot.value.contains(e.target as Node)) {
-      themeMenuOpen.value = false;
-    }
-  }
-
-  function onGlobalKeydown(e: KeyboardEvent): void {
-    if (e.key === "Escape") themeMenuOpen.value = false;
-  }
-
-  function syncTheme(): void {
-    document.documentElement.setAttribute("data-theme", theme.value);
-  }
-  watch(theme, (t) => {
-    try {
-      localStorage.setItem(THEME_KEY, t);
-    } catch {
-      /* 写不进去就本次会话生效 */
-    }
-    syncTheme();
-  });
-
   return {
     THEMES,
     theme,
     currentThemeLabel,
     currentThemeSwatch,
-    themeMenuOpen,
     pickTheme,
-    onGlobalPointerDown,
-    onGlobalKeydown,
     syncTheme,
   };
 }

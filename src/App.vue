@@ -10,9 +10,13 @@ import { useTags } from "./composables/useTags";
 import { useMiniWindow } from "./composables/useMiniWindow";
 import AnalogDial from "./components/AnalogDial.vue";
 import IntroSplash from "./components/IntroSplash.vue";
+import MiniWidget from "./components/MiniWidget.vue";
 import ParticleField from "./components/ParticleField.vue";
+import PomodoroPanel from "./components/PomodoroPanel.vue";
 import SmokeField from "./components/SmokeField.vue";
 import StatsView from "./components/StatsView.vue";
+import TagRow from "./components/TagRow.vue";
+import ThemeMenu from "./components/ThemeMenu.vue";
 import TitleBar from "./components/TitleBar.vue";
 import ToastHost from "./components/ToastHost.vue";
 import TypewriterHint from "./components/TypewriterHint.vue";
@@ -59,18 +63,9 @@ watch(tab, () => {
 /** 启动画面（Scramble 标题 + 粒子）：播完一次就摘掉，全程 ≤0.5s。 */
 const introDone = ref(false);
 
-// 背景主题与底部主题菜单：纯逻辑在 composables/useTheme.ts
-const {
-  THEMES,
-  theme,
-  currentThemeLabel,
-  currentThemeSwatch,
-  themeMenuOpen,
-  pickTheme,
-  onGlobalPointerDown,
-  onGlobalKeydown,
-  syncTheme,
-} = useTheme();
+// 背景主题：纯逻辑在 composables/useTheme.ts（模块级单例，与 ThemeMenu 共享）。
+// 菜单开合是 ThemeMenu 的私有 UI 态，App 不再关心。
+const { theme, syncTheme } = useTheme();
 
 /** 冥想模式：呼吸圆环 + 慢速粒子背景。纯氛围层，不改变计时行为。 */
 const MEDITATION_KEY = "pristimer.meditation";
@@ -97,25 +92,9 @@ const snapshot = ref<TimerSnapshot>({
 const recovered = ref<Recovered | null>(null);
 const bannerDismissed = ref(false);
 
-// 番茄钟状态/设置面板/循环序列拖拽：纯逻辑在 composables/usePomodoro.ts
-const {
-  pomodoro,
-  pomoConfig,
-  pomoSettingsOpen,
-  pomoFeedback,
-  pomoDraft,
-  syncDraft,
-  applyPomoConfig,
-  seqLocal,
-  dragFrom,
-  seqSnapping,
-  onDropSeq,
-  togglePomodoro,
-  totalDots,
-  litDots,
-  phaseAccent,
-  SEQ_LABEL,
-} = usePomodoro();
+// 番茄钟状态：纯逻辑在 composables/usePomodoro.ts（模块级单例，与 PomodoroPanel 共享）。
+// 阶段条/设置面板/序列卡归 PomodoroPanel，App 只留侧栏与开关要用的部分。
+const { pomodoro, pomoConfig, syncDraft, togglePomodoro, phaseAccent } = usePomodoro();
 
 // ---------------------------------------------------------------------------
 // 计时页底部的使用提示（Tabs 滑动指示器）。
@@ -188,20 +167,9 @@ const focusHint = ref<string | null>(null);
 // 而历史会话上的 tag 是既成事实，改名只影响"下一条"，不回改历史。
 // ---------------------------------------------------------------------------
 
-// 科目标签集合与选中态：纯逻辑在 composables/useTags.ts
-const {
-  tags,
-  selectedTag,
-  tagInput,
-  editingTag,
-  editingText,
-  applyTag,
-  submitTag,
-  startTagEdit,
-  cancelTagEdit,
-  commitTagEdit,
-  removeTag,
-} = useTags();
+// 科目标签：纯逻辑在 composables/useTags.ts（模块级单例，与 TagRow 共享）。
+// App 只留迷你组件要展示的当前选中科目。
+const { selectedTag } = useTags();
 
 /** 四种状态各配一个强调色，盘面、圆点、主按钮共用。
  *  番茄休息阶段优先用阶段色（蓝 / 紫），让「放松时段」有别于专注。 */
@@ -415,9 +383,6 @@ let unlisten: UnlistenFn | null = null;
 let unlistenPomodoro: UnlistenFn | null = null;
 
 onMounted(async () => {
-  // 主题菜单的外点关闭 / Escape 关闭（第 21 轮）
-  document.addEventListener("pointerdown", onGlobalPointerDown);
-  document.addEventListener("keydown", onGlobalKeydown);
   // 窗口几何已由 Rust 在 show 之前摆好（见 lib.rs 的 place_main_window），
   // 前端不再参与启动期恢复 —— 这里只补运行时约束。
   syncMiniClass();
@@ -487,8 +452,6 @@ watch(
 );
 
 onUnmounted(() => {
-  document.removeEventListener("pointerdown", onGlobalPointerDown);
-  document.removeEventListener("keydown", onGlobalKeydown);
   unlisten?.();
   unlistenPomodoro?.();
   clearTimeout(appliedTimer);
@@ -521,57 +484,15 @@ onUnmounted(() => {
     <div class="shell" :class="{ mini, 'morph-out': morphOut }">
       <TitleBar v-if="!mini" @close="onWindowClose" @mini="toggleMini" />
 
-      <!-- 迷你模式：整窗缩成一枚贴边置顶的"组件"，只留时间与开始/暂停。
-           整面可拖拽（data-tauri-drag-region），按钮不拖拽只响应点击；
-           底部细线是倒计时进度（与主表盘的细弧同源）。 -->
-      <div v-if="mini" class="mini" data-tauri-drag-region>
-        <span
-          v-if="ARC_PROGRESS !== null"
-          class="mini-progress"
-          :style="{ transform: `scaleX(${ARC_PROGRESS})` }"
-        />
-        <div class="mini-read" data-tauri-drag-region>
-          <p class="mini-clock" :class="{ run: isRunning }">{{ display }}</p>
-          <p class="mini-state">
-            <i class="dot" />{{ miniLabel }}
-            <span v-if="selectedTag" class="mini-tag">{{ selectedTag }}</span>
-          </p>
-        </div>
-        <div class="mini-actions">
-          <button
-            class="mini-btn"
-            :class="{ live: isRunning }"
-            :title="isRunning ? '暂停' : '开始'"
-            @click="isRunning ? timerApi.pause() : timerApi.start()"
-          >
-            <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
-              <rect v-if="isRunning" x="2" y="1.5" width="3" height="9" rx="1" fill="currentColor" />
-              <rect v-if="isRunning" x="7" y="1.5" width="3" height="9" rx="1" fill="currentColor" />
-              <path v-else d="M3 1.6v8.8c0 .5.55.8.97.53l7-4.4a.62.62 0 0 0 0-1.06l-7-4.4A.62.62 0 0 0 3 1.6Z" fill="currentColor" />
-            </svg>
-          </button>
-          <button class="mini-btn" title="还原窗口" @click="toggleMini">
-            <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" fill="none">
-              <path
-                d="M1.2 4.4V1.2h3.2M10.8 4.4V1.2H7.6M1.2 7.6v3.2h3.2M10.8 7.6v3.2H7.6"
-                stroke="currentColor"
-                stroke-width="1.2"
-                stroke-linecap="round"
-              />
-            </svg>
-          </button>
-          <button class="mini-btn" title="收进托盘（计时继续）" @click="closeToTray">
-            <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" fill="none">
-              <path
-                d="M2 2.5h8M2 6h8M2 9.5h5"
-                stroke="currentColor"
-                stroke-width="1.2"
-                stroke-linecap="round"
-              />
-            </svg>
-          </button>
-        </div>
-      </div>
+      <MiniWidget
+        v-if="mini"        :display="display"
+        :mini-label="miniLabel"
+        :selected-tag="selectedTag"
+        :is-running="isRunning"
+        :progress="ARC_PROGRESS"
+        @toggle="toggleMini"
+        @tray="closeToTray"
+      />
 
       <div v-else class="stage">
         <nav class="tabs">
@@ -685,112 +606,9 @@ onUnmounted(() => {
               <button class="ghost" @click="resetTimer">重置</button>
             </div>
 
-            <!-- 科目标签行：选中的科目会落到下一条会话上，进统计与 CSV。
-                 标签本身可维护 —— 双击重命名，悬停出现 × 删除，输入框回车新增。 -->
-            <div class="tags">
-              <div v-for="tag in tags" :key="tag" class="tag-slot">
-                <input
-                  v-if="editingTag === tag"
-                  v-model="editingText"
-                  class="tag-edit"
-                  type="text"
-                  maxlength="20"
-                  @keyup.enter="commitTagEdit"
-                  @keyup.esc="cancelTagEdit"
-                  @blur="commitTagEdit"
-                />
-                <button
-                  v-else
-                  class="tag-chip"
-                  :class="{ active: selectedTag === tag }"
-                  :title="`${tag} · 双击重命名`"
-                  @click="applyTag(selectedTag === tag ? null : tag)"
-                  @dblclick="startTagEdit(tag)"
-                >
-                  <span class="chip-text">{{ tag }}</span>
-                  <span class="chip-del" title="删除这个标签" @click.stop="removeTag(tag)">×</span>
-                </button>
-              </div>
-              <input
-                v-model="tagInput"
-                class="tag-input"
-                type="text"
-                maxlength="20"
-                placeholder="自定义"
-                title="输入科目后按回车添加"
-                @keyup.enter="submitTag"
-              />
-            </div>
+            <TagRow />
 
-            <!-- 番茄阶段条：开启后常驻，循环推进全在 Rust 侧，这里只读状态。
-                 点击展开设置面板（齿轮），循环参数即改即存。 -->
-            <Transition name="pomo">
-              <div v-if="pomodoro?.enabled" class="pomo-wrap">
-                <button
-                  class="pomo-strip"
-                  :aria-expanded="pomoSettingsOpen"
-                  title="点击调整番茄时长"
-                  @click="pomoSettingsOpen = !pomoSettingsOpen"
-                >
-                  <span class="pomo-label">{{ PHASE_LABEL[pomodoro.phase] }}</span>
-                  <span class="pomo-dots">
-                    <i v-for="n in totalDots" :key="n" :class="{ done: litDots >= n }" />
-                  </span>
-                  <svg class="pomo-gear" :class="{ open: pomoSettingsOpen }" viewBox="0 0 24 24" width="13" height="13">
-                    <path
-                      fill="currentColor"
-                      d="M19.14 12.94a7.5 7.5 0 0 0 .06-.94 7.5 7.5 0 0 0-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.65 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.5 7.5 0 0 0 0 1.88l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32c.13.23.4.32.61.22l2.39-.96c.49.38 1.03.7 1.62.94l.36 2.54c.04.24.25.42.5.42h3.84c.25 0 .46-.18.5-.42l.36-2.54a7.3 7.3 0 0 0 1.62-.94l2.39.96c.21.1.48.01.61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
-                    />
-                  </svg>
-                </button>
-
-                <Transition name="pomo-settings">
-                  <form v-if="pomoSettingsOpen" class="pomo-settings" @submit.prevent="applyPomoConfig">
-                    <label>
-                      <span>专注</span>
-                      <input v-model.number="pomoDraft.focusMin" type="number" min="1" max="120" />
-                    </label>
-                    <label>
-                      <span>短休</span>
-                      <input v-model.number="pomoDraft.shortMin" type="number" min="1" max="120" />
-                    </label>
-                    <label>
-                      <span>长休</span>
-                      <input v-model.number="pomoDraft.longMin" type="number" min="1" max="120" />
-                    </label>
-                    <label>
-                      <span>轮数</span>
-                      <input v-model.number="pomoDraft.rounds" type="number" min="2" max="8" />
-                    </label>
-                    <button type="submit" class="pomo-apply">应用</button>
-                    <span class="pomo-hint" :class="pomoFeedback">
-                      {{ pomoFeedback === "saved" ? "已保存 ✓" : pomoFeedback === "error" ? "保存失败" : "分钟 / 长休前轮数" }}
-                    </span>
-
-                    <!-- 循环序列（Draggable）：拖「长休息」卡改它的位置 = 改轮数 -->
-                    <div class="seq" :class="{ snapping: seqSnapping }">
-                      <div
-                        v-for="(card, i) in seqLocal"
-                        :key="card.id"
-                        class="seq-card"
-                        :class="[card.kind, { dragging: dragFrom === i }]"
-                        draggable="true"
-                        title="拖动调整顺序"
-                        @dragstart="dragFrom = i"
-                        @dragover.prevent
-                        @drop.prevent="onDropSeq(i)"
-                        @dragend="dragFrom = -1"
-                      >
-                        <span class="seq-handle">⋮⋮</span>
-                        <span class="seq-name">{{ SEQ_LABEL[card.kind] }}</span>
-                        <span class="seq-min">{{ card.minutes }} 分</span>
-                      </div>
-                    </div>
-                    <p class="seq-hint">拖动「长休息」卡片可改变它的位置（＝长休前的专注轮数）；专注与短休的交替由番茄节奏固定</p>
-                  </form>
-                </Transition>
-              </div>
-            </Transition>
+            <PomodoroPanel />
 
             <div class="presets">
               <button
@@ -842,40 +660,7 @@ onUnmounted(() => {
                 >
                   冥想
                 </button>
-                <span class="theme-ctl" ref="themeCtlRoot">
-                  <!-- 第 21 轮：主题键升级为底部菜单 —— 按钮显示当前主题
-                       （色点 + 名称），点击向上弹出玻璃菜单，六主题带选中态 -->
-                  <button
-                    class="theme-btn"
-                    :class="{ open: themeMenuOpen }"
-                    :aria-expanded="themeMenuOpen"
-                    title="切换主题"
-                    @click="themeMenuOpen = !themeMenuOpen"
-                  >
-                    <i class="theme-dot" :style="{ background: currentThemeSwatch }" />
-                    <span>{{ currentThemeLabel }}</span>
-                    <svg class="chev" viewBox="0 0 10 6" aria-hidden="true">
-                      <path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-                    </svg>
-                  </button>
-                  <Transition name="theme-pop">
-                    <span v-if="themeMenuOpen" class="theme-menu" role="radiogroup" aria-label="背景主题">
-                      <button
-                        v-for="t in THEMES"
-                        :key="t.id"
-                        class="theme-item"
-                        :class="{ active: theme === t.id }"
-                        role="radio"
-                        :aria-checked="theme === t.id"
-                        @click="pickTheme(t.id)"
-                      >
-                        <i class="sw" :style="{ background: t.swatch }" />
-                        <span>{{ t.label }}</span>
-                        <i v-if="theme === t.id" class="check" aria-hidden="true">✓</i>
-                      </button>
-                    </span>
-                  </Transition>
-                </span>
+                <ThemeMenu />
               </span>
             </div>
 
@@ -958,120 +743,6 @@ onUnmounted(() => {
    `flex: 1` 挂在 .shell 里时，宽度会被 classic 滚动条的预留槽挤窄，露出的
    深色底在小窗上就是一条黑边（滚动条如今已全局取消，但 fixed 仍是更稳的
    边界定义 —— 视口即边界，一滴不漏）。 */
-.mini {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-content);
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0 0.65rem 0 0.9rem;
-  /* 圆角跟 Rust 侧的 DWM 圆角（ROUNDSMALL）对齐；CSS 这层负责把内部的进度线、
-     按钮底色裁进同一轮廓 —— 只靠 DWM 裁窗口、内部还画满直角，会露出尖角。 */
-  border-radius: 8px;
-  background:
-    linear-gradient(165deg, rgb(255 255 255 / 0.055), transparent 55%),
-    var(--glass-bg-strong);
-  backdrop-filter: var(--glass-blur-lg);
-  user-select: none;
-  animation: mini-in 0.34s var(--ease-out-expo) backwards;
-}
-/* 进场：从略小、略透明处"贴"出来，与窗口自身由大到小的收缩连成一件事 */
-@keyframes mini-in {
-  from {
-    opacity: 0;
-    transform: scale(0.94);
-  }
-}
-/* 倒计时进度细线：与主表盘的外圈细弧同源（ARC_PROGRESS），
-   让"还剩多少"在余光里也能读到 */
-.mini-progress {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 2px;
-  background: var(--accent);
-  opacity: 0.8;
-  transform-origin: left center;
-  transition: transform 0.4s var(--ease-out-quart);
-  pointer-events: none;
-}
-.mini-read {
-  min-width: 0;
-}
-.mini-clock {
-  margin: 0;
-  font-size: 1.72rem;
-  line-height: 1.15;
-  font-weight: 200;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.04em;
-  color: var(--ink-soft);
-  transition: color 0.4s ease;
-}
-.mini-clock.run {
-  color: var(--accent);
-}
-.mini-state {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  margin: 0;
-  font-size: 0.6rem;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--ink-dim);
-}
-.mini-tag {
-  padding: 0.05rem 0.4rem;
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
-  font-size: 0.58rem;
-  letter-spacing: 0.08em;
-  color: var(--ink-soft);
-  background: var(--glass-bg);
-}
-.mini-actions {
-  display: flex;
-  gap: 0.35rem;
-  flex: none;
-}
-.mini-btn {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border: 1px solid rgb(255 255 255 / 0.14);
-  border-radius: 9px;
-  background: var(--lg-bg);
-  box-shadow: var(--lg-shadow);
-  color: var(--ink-soft);
-  cursor: pointer;
-  backdrop-filter: var(--lg-filter);
-  transition:
-    background var(--t-fast) ease,
-    border-color var(--t-fast) ease,
-    color var(--t-fast) ease,
-    transform var(--t-fast) var(--ease-out-back);
-}
-.mini-btn:hover {
-  background: var(--lg-bg-hover);
-  border-color: rgb(255 255 255 / 0.26);
-  color: var(--ink);
-}
-.mini-btn:active {
-  transform: scale(0.94);
-}
-.mini-btn.live {
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
-}
-
 .stage {
   flex: 1;
   display: flex;
@@ -1542,296 +1213,6 @@ onUnmounted(() => {
 }
 
 /* ------------------------------------------------------------ 科目标签行 */
-.tags {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-}
-/* 每个标签占一个槽：输入态与展示态在同一位置切换，不会把整行挤动 */
-.tag-slot {
-  display: inline-flex;
-}
-.tag-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  /* 右侧多留一点：删除键常驻占位（只是透明），悬停时出现不会引起位移 */
-  padding: 0.22rem 0.4rem 0.22rem 0.85rem;
-  max-width: 11rem;
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  color: var(--ink-dim);
-  font: inherit;
-  font-size: 0.75rem;
-  cursor: pointer;
-  transition:
-    color var(--t-base) var(--ease-out-expo),
-    border-color var(--t-base) var(--ease-out-expo),
-    background var(--t-base) var(--ease-out-expo),
-    box-shadow var(--t-base) var(--ease-out-expo),
-    transform var(--t-base) var(--ease-out-back);
-}
-.tag-chip:hover {
-  color: var(--ink-soft);
-  border-color: var(--glass-border-strong);
-  transform: translateY(-1px);
-}
-.tag-chip:active {
-  transform: scale(0.95);
-}
-.tag-chip.active {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 26%, transparent);
-}
-/* 自定义标签可能很长（上限 20 字）：文字截断而不是把整行撑爆 */
-.chip-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* 删除键：平时透明占位，悬停整颗胶囊时浮现 */
-.chip-del {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 1.1em;
-  height: 1.1em;
-  border-radius: 50%;
-  font-size: 1.1em;
-  line-height: 1;
-  opacity: 0;
-  transform: scale(0.6);
-  transition:
-    opacity var(--t-fast) ease,
-    transform var(--t-fast) var(--ease-out-back),
-    background var(--t-fast) ease,
-    color var(--t-fast) ease;
-}
-.tag-chip:hover .chip-del {
-  opacity: 0.7;
-  transform: none;
-}
-.chip-del:hover {
-  opacity: 1;
-  background: rgb(255 120 120 / 0.28);
-  color: #ffd0d0;
-}
-/* 内联重命名的输入框：与胶囊同高同形，切换上去像是同一颗控件换了状态 */
-.tag-edit {
-  width: 7em;
-  padding: 0.22rem 0.7rem;
-  border: 1px solid var(--accent);
-  border-radius: 999px;
-  background: var(--glass-bg-strong);
-  color: var(--ink);
-  font: inherit;
-  font-size: 0.75rem;
-  text-align: center;
-  outline: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
-}
-/* ★ 宽度必须放得下 placeholder「自定义」三个汉字。
-   原来是 5ch —— ch 是数字 "0" 的宽度（0.75rem 下约 6.7px），5ch ≈ 33px，
-   再扣掉左右 padding 就只剩十几个像素，三个汉字（36px）根本显示不全。
-   改用 em（1em = 一个汉字宽）来对齐意图。 */
-.tag-input {
-  width: 5em;
-  padding: 0.22rem 0.5rem;
-  border: 1px dashed rgb(255 255 255 / 0.18);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--ink-soft);
-  font: inherit;
-  font-size: 0.75rem;
-  text-align: center;
-  transition:
-    width var(--t-base) var(--ease-out-expo),
-    border-color var(--t-base) ease,
-    color var(--t-base) ease,
-    background var(--t-base) ease;
-}
-.tag-input::placeholder {
-  color: #565d68;
-}
-.tag-input:focus {
-  outline: none;
-  border-style: solid;
-  border-color: var(--accent);
-  width: 9em;
-  background: var(--glass-bg);
-}
-
-/* ------------------------------------------------------------ 番茄阶段条 */
-.pomo-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  align-self: center;
-}
-.pomo-strip {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
-  padding: 0.4rem 1.1rem;
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  box-shadow: var(--glass-edge-soft);
-  cursor: pointer;
-  font: inherit;
-  color: inherit;
-  transition:
-    border-color var(--t-base) var(--ease-out-expo),
-    background var(--t-base) var(--ease-out-expo),
-    transform var(--t-base) var(--ease-out-back);
-}
-.pomo-strip:hover {
-  border-color: var(--glass-border-strong);
-  background: var(--glass-bg-strong);
-}
-.pomo-strip:active {
-  transform: scale(0.97);
-}
-.pomo-label {
-  font-size: 0.75rem;
-  letter-spacing: 0.22em;
-  color: var(--ink-dim);
-  text-transform: uppercase;
-}
-.pomo-dots {
-  display: flex;
-  gap: 0.35rem;
-}
-.pomo-dots i {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: rgb(255 255 255 / 0.12);
-  transition:
-    background 0.35s var(--ease-out-expo),
-    box-shadow 0.35s var(--ease-out-expo),
-    transform 0.35s var(--ease-out-back);
-}
-.pomo-dots i.done {
-  background: var(--accent);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 60%, transparent);
-  transform: scale(1.1);
-}
-.pomo-enter-active {
-  transition: opacity var(--t-base) var(--ease-out-expo), transform var(--t-base) var(--ease-morph);
-}
-.pomo-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
-}
-.pomo-enter-from,
-.pomo-leave-to {
-  opacity: 0;
-  transform: translateY(8px) scale(0.97);
-}
-.pomo-gear {
-  color: var(--ink-faint);
-  transition: transform 0.45s var(--ease-out-back), color var(--t-base) ease;
-}
-.pomo-gear.open {
-  transform: rotate(90deg);
-  color: #9ca3af;
-}
-
-/* ------------------------------------------------------------ 番茄设置面板 */
-.pomo-settings {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-  padding: 0.55rem 1rem;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  box-shadow: var(--glass-edge), var(--glass-shadow);
-}
-.pomo-settings label {
-  display: flex;
-  align-items: baseline;
-  gap: 0.35rem;
-  font-size: 0.72rem;
-  color: var(--ink-dim);
-}
-.pomo-settings input {
-  width: 3.2ch;
-  padding: 0.15rem 0.3rem;
-  border: 1px solid rgb(255 255 255 / 0.12);
-  border-radius: 0.45rem;
-  background: var(--glass-bg-deep);
-  color: var(--ink);
-  font: inherit;
-  font-size: 0.8rem;
-  text-align: center;
-  transition: border-color var(--t-base) ease, box-shadow var(--t-base) ease;
-}
-.pomo-settings input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent);
-}
-/* 隐藏 number 输入的上下箭头，视觉更干净 */
-.pomo-settings input::-webkit-outer-spin-button,
-.pomo-settings input::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-.pomo-settings input[type="number"] {
-  appearance: textfield;
-  -moz-appearance: textfield;
-}
-.pomo-apply {
-  padding: 0.28rem 0.85rem;
-  border: 1px solid var(--glass-border-strong);
-  border-radius: 999px;
-  background: var(--glass-bg-strong);
-  color: var(--ink-soft);
-  font: inherit;
-  font-size: 0.75rem;
-  cursor: pointer;
-  transition: background var(--t-base) var(--ease-out-expo), transform var(--t-base) var(--ease-out-expo);
-}
-.pomo-apply:hover {
-  background: rgb(255 255 255 / 0.14);
-}
-.pomo-apply:active {
-  transform: scale(0.95);
-}
-.pomo-hint {
-  font-size: 0.68rem;
-  color: var(--ink-faint);
-  transition: color var(--t-base) ease;
-}
-.pomo-hint.saved {
-  color: #6fe0a8;
-}
-.pomo-hint.error {
-  color: #ff8f8f;
-}
-.pomo-settings-enter-active {
-  transition: opacity var(--t-base) var(--ease-out-expo), transform var(--t-base) var(--ease-morph);
-}
-.pomo-settings-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
-}
-.pomo-settings-enter-from,
-.pomo-settings-leave-to {
-  opacity: 0;
-  transform: translateY(-8px) scale(0.96);
-}
-
 /* ------------------------------------------------------ 自定义时长输入 */
 .custom {
   display: flex;
@@ -2155,89 +1536,6 @@ onUnmounted(() => {
   }
 }
 
-/* ---------------------------------------------------- 番茄序列（Draggable） */
-.pomo-settings {
-  flex-wrap: wrap;
-}
-.seq {
-  flex-basis: 100%;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  justify-content: center;
-  margin-top: 3px;
-}
-/* 拖出不合法顺序：整排轻晃提示"弹回" */
-.seq.snapping {
-  animation: seq-shake 0.32s ease;
-}
-@keyframes seq-shake {
-  25% {
-    transform: translateX(-4px);
-  }
-  75% {
-    transform: translateX(4px);
-  }
-}
-.seq-card {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 0.28rem 0.6rem;
-  border: 1px solid var(--glass-border);
-  border-radius: 9px;
-  background: var(--glass-bg-deep);
-  color: var(--ink-soft);
-  font-size: 0.72rem;
-  cursor: grab;
-  user-select: none;
-  transition:
-    border-color var(--t-fast) ease,
-    background var(--t-fast) ease,
-    opacity var(--t-fast) ease,
-    transform var(--t-fast) var(--ease-out-back);
-}
-.seq-card:hover {
-  border-color: var(--glass-border-strong);
-  background: var(--glass-bg-strong);
-}
-.seq-card:active {
-  cursor: grabbing;
-}
-.seq-card.dragging {
-  opacity: 0.45;
-  transform: scale(0.95);
-}
-.seq-handle {
-  color: rgb(255 255 255 / 0.24);
-  font-size: 0.68rem;
-  letter-spacing: -2px;
-}
-.seq-card.focus .seq-name {
-  color: var(--accent);
-}
-.seq-card.short .seq-name {
-  color: #5aa7ff;
-}
-.seq-card.long {
-  border-color: color-mix(in srgb, #b58cff 42%, transparent);
-}
-.seq-card.long .seq-name {
-  color: #b58cff;
-}
-.seq-min {
-  font-size: 0.64rem;
-  color: var(--ink-faint);
-  font-variant-numeric: tabular-nums;
-}
-.seq-hint {
-  flex-basis: 100%;
-  margin: 1px 0 0;
-  text-align: center;
-  font-size: 0.64rem;
-  color: var(--ink-faint);
-}
-
 /* ---------------------------------------------------- 氛围控制（冥想/主题） */
 .aux {
   display: inline-flex;
@@ -2258,120 +1556,6 @@ onUnmounted(() => {
   color: #cdb4ff;
   box-shadow: 0 0 14px rgb(181 140 255 / 0.28);
 }
-.theme-ctl {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-/* 第 21 轮：主题菜单按钮 —— 当前主题的色点 + 名称 + 下翻箭头，
-   形态借 presets 按钮的胶囊壳，是底部菜单的一等公民而非角落色点 */
-.theme-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  padding: 0.3rem 0.65rem 0.3rem 0.45rem;
-  border: 1px solid var(--glass-border);
-  border-radius: 999px;
-  background: var(--glass-bg);
-  color: var(--ink-soft);
-  font-size: 0.72rem;
-  cursor: pointer;
-  transition:
-    border-color var(--t-base) var(--ease-out-expo),
-    background var(--t-base) var(--ease-out-expo),
-    color var(--t-base) ease,
-    box-shadow var(--t-base) ease;
-}
-.theme-btn:hover,
-.theme-btn.open {
-  border-color: var(--glass-border-strong);
-  background: var(--glass-bg-strong);
-  color: var(--ink);
-  box-shadow: var(--glass-shadow);
-}
-.theme-dot {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 1px solid rgb(255 255 255 / 0.25);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 24%, transparent);
-}
-.theme-btn .chev {
-  width: 9px;
-  height: 6px;
-  color: var(--ink-faint);
-  transition: transform var(--t-base) var(--ease-out-back);
-}
-.theme-btn.open .chev {
-  transform: rotate(180deg);
-}
-/* 弹出菜单：向上展开的玻璃面板，铺在底部菜单上方（高于内容层） */
-.theme-menu {
-  position: absolute;
-  bottom: calc(100% + 10px);
-  right: 0;
-  z-index: var(--z-chrome);
-  display: flex;
-  flex-direction: column;
-  min-width: 132px;
-  padding: 4px;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius);
-  background: var(--glass-bg-strong);
-  backdrop-filter: var(--glass-blur);
-  box-shadow: var(--glass-edge-strong), var(--glass-shadow-lg);
-  transform-origin: 85% 100%;
-}
-.theme-item {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.42rem 0.6rem;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--ink-soft);
-  font-size: 0.74rem;
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--t-fast) ease, color var(--t-fast) ease;
-}
-.theme-item:hover {
-  background: color-mix(in srgb, var(--ink) 8%, transparent);
-  color: var(--ink);
-}
-/* ★ 选中项不能直接吃 --accent：空闲态 accent 是深灰 #4a5160，
-   深色主题下文字会隐形 —— 文字用墨色、选中态用浅色底表达。
-   ★ 特异性警示：元素同时命中 .presets button.active（0,3,1），
-   这里必须挂 .presets 前缀抬到 (0,4,0) 才能盖过它。 */
-.presets .theme-item.active {
-  color: var(--ink);
-  background: color-mix(in srgb, var(--ink) 10%, transparent);
-}
-.theme-item .sw {
-  width: 15px;
-  height: 15px;
-  flex: none;
-  border-radius: 50%;
-  border: 1px solid var(--glass-border-strong);
-}
-.theme-item .check {
-  margin-left: auto;
-  font-size: 0.68rem;
-}
-/* 弹出过渡：从按钮锚点浮起 + 回弹收尾（--ease-out-back 的微过冲） */
-.theme-pop-enter-active {
-  transition: opacity 0.26s var(--ease-out-expo), transform 0.3s var(--ease-out-back);
-}
-.theme-pop-leave-active {
-  transition: opacity 0.18s ease, transform 0.18s ease;
-}
-.theme-pop-enter-from,
-.theme-pop-leave-to {
-  opacity: 0;
-  transform: translateY(8px) scale(0.94);
-}
-
 /* ---------------------------------------------------- 使用提示（Tabs） */
 .tips {
   display: flex;
@@ -2466,8 +1650,7 @@ onUnmounted(() => {
   .custom.pulse,
   .action.liquid .blob,
   .action.liquid .labels,
-  .meditating .dial::after,
-  .seq.snapping {
+  .meditating .dial::after {
     animation: none;
   }
   .running .clock .sep {
@@ -2483,16 +1666,11 @@ onUnmounted(() => {
   .fade-leave-active,
   .digit-enter-active,
   .digit-leave-active,
-  .pomo-enter-active,
-  .pomo-leave-active,
-  .pomo-settings-enter-active,
-  .pomo-settings-leave-active,
   .pill,
   .tips-indicator,
   .labels > span,
   .controls button,
   .presets button,
-  .tag-chip,
   .clock {
     transition: none;
   }
