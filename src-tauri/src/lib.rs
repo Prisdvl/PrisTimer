@@ -8,6 +8,7 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_notification::NotificationExt;
 
+mod backup;
 mod commands;
 pub mod log;
 mod pomodoro;
@@ -267,6 +268,10 @@ fn build_app() -> tauri::Builder<tauri::Wry> {
             // 2. 先做启动恢复。
             let mut recorder = Recorder::new(store);
             let recovered = recorder.recover();
+
+            // 每日首次启动做一份数据库快照（backups/，保留 7 份）。
+            // 放在恢复之后：快照里是已恢复归位的最新状态；失败只写日志。
+            backup::run_daily_backup(&dir, recorder.store());
             if saved_tag.is_some() {
                 recorder.set_tag(saved_tag.clone());
             }

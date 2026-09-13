@@ -482,6 +482,18 @@ impl Store {
         }
     }
 
+    /// 把当前数据库内容快照到 `path`（SQLite `VACUUM INTO`）。
+    ///
+    /// 为什么不用文件拷贝：WAL 模式下 `.db` 主文件不包含未 checkpoint 的
+    /// 页，直接 copy 会拿到缺页的旧状态；`VACUUM INTO` 在一条语句里
+    /// 产出**含全部已提交数据**的一致性快照，且不需要额外依赖。
+    /// 目标文件必须不存在，否则 SQLite 报错 —— 由调用方先做文件名排重。
+    pub fn backup_to(&self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
+        self.conn.execute("VACUUM INTO ?1", params![path.to_string_lossy()])?;
+        Ok(())
+    }
+
     /// 写一个配置项（upsert）。同 key 覆盖旧值。
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
         self.conn.execute(

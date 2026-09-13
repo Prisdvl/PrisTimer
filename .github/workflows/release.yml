@@ -1,0 +1,47 @@
+name: Release
+
+# tag 推送（v*）自动构建 MSI 并发布 GitHub Release。
+# 构建走 tauri-action：它会在工程根执行 tauri build（beforeBuildCommand
+# 由 tauri.conf.json 驱动），MSI 产物自动上传到 Release 草稿。
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build and release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: .
+          tagName: ${{ github.ref_name }}
+          releaseName: "PrisTimer ${{ github.ref_name }}"
+          releaseBody: "请下载对应平台的安装包（MSI）。See CHANGELOG.md for details."
+          releaseDraft: false
+          prerelease: false

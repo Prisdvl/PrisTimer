@@ -10,7 +10,9 @@
 [![Vue](https://img.shields.io/badge/Vue-3-4FC08D?logo=vue.js&logoColor=white)](https://vuejs.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-*Anchored time, glass surfaces, four skies.* — 锚定的计时引擎，玻璃的界面，四片不同的天空。
+*Anchored time, glass surfaces, six skies.* — 锚定的计时引擎，玻璃的界面，六片不同的天空。
+
+[简体中文](README.md) · [English](README.en.md)
 
 ![PrisTimer 深空主题](docs/screenshots/theme-deep.jpg)
 
@@ -85,6 +87,10 @@ npm run tauri dev
 # 构建安装包（Windows 产出 MSI）
 npm run tauri build
 ```
+
+## 📥 下载
+
+最新 MSI 安装包见 [Releases](https://github.com/Prisdvl/PrisTimer/releases) 页面；推送 `v*` 标签会自动构建并发布。
 
 ## 📁 目录结构
 

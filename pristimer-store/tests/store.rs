@@ -863,3 +863,33 @@ fn a_stale_read_snapshot_locks_immediately_but_a_fresh_connection_recovers() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn backup_snapshot_contains_committed_data() {
+    let dir = std::env::temp_dir().join("pristimer_store_backup_test");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = dir.join("pristimer.db");
+    let backup = dir.join("snapshot.db");
+
+    let store = Store::open(&db).unwrap();
+    let id = store
+        .begin_session(SessionKind::Stopwatch, Some("数学"), T0, None)
+        .unwrap();
+    store
+        .finish_session(id, T0 + 30 * MIN, 30 * MIN, false)
+        .unwrap();
+
+    // 快照到不存在的目标路径：应当成功
+    store.backup_to(&backup).unwrap();
+
+    // 目标已存在时再次快照：SQLite 拒绝（调用方负责排重），错误可辨
+    assert!(store.backup_to(&backup).is_err());
+
+    drop(store);
+
+    // 打开快照：已提交数据必须完整在
+    let restored = Store::open(&backup).unwrap();
+    assert_eq!(restored.total_ms().unwrap(), (30 * MIN) as i64);
+    assert_eq!(restored.finished_count().unwrap(), 1);
+}
