@@ -51,6 +51,33 @@ jobs:
       - name: Clippy core + store
         run: cargo clippy -p pristimer-core -p pristimer-store --all-targets --all-features -- -D warnings
 
+  # src-tauri 是 Windows 专属应用壳（windows-sys / Win32 API），ubuntu 编译不了，
+  # 必须在 windows runner 上做门禁。runner 自带 MSVC，链接环境与 release.yml 相同。
+  tauri-check:
+    name: Clippy + Tests (src-tauri, windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: tauri-check-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Clippy src-tauri
+        run: cargo clippy -p pristimer --all-targets --all-features -- -D warnings
+
+      - name: Tests src-tauri
+        run: cargo test -p pristimer
+
   frontend:
     name: Frontend type-check + unit tests
     runs-on: ubuntu-latest

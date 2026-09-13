@@ -107,7 +107,9 @@ mod tests {
     #[test]
     fn civil_date_conversions() {
         assert_eq!(civil_from_days(0), (1970, 1, 1));
-        assert_eq!(civil_from_days(19_723), (2024, 1, 1)); // 2024-01-01
-        assert_eq!(civil_from_days(20_672), (2026, 8, 15));
+        assert_eq!(civil_from_days(19_723), (2024, 1, 1)); // 54 年（13 个闰年）
+        assert_eq!(civil_from_days(19_782), (2024, 2, 29)); // 闰年 2 月末
+        assert_eq!(civil_from_days(20_672), (2026, 8, 7)); // 218 天后 = 8 月 7 日
+        assert_eq!(civil_from_days(20_680), (2026, 8, 15));
     }
 }
