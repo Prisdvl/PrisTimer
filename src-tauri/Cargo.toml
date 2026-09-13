@@ -21,11 +21,16 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
-tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 pristimer-core = { path = "../pristimer-core", features = ["serde"] }
 pristimer-store = { path = "../pristimer-store", features = ["serde"] }
+
+# 开机自启是桌面专属概念（移动端没有）。Cargo.toml 的 target 谓词不认
+# tauri-build 注入的 cfg(desktop)，必须写全三个桌面平台；代码侧的
+# #[cfg(desktop)] 走 build.rs 注入的 cfg，两处语义对齐。
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
+tauri-plugin-autostart = "2"
 
 # 无边框窗口的圆角只能走 DWM：`decorations: false` 的窗口没有 WS_CAPTION，
 # Windows 不会给它自动圆角，四个直角在深色桌面上像是没做完。

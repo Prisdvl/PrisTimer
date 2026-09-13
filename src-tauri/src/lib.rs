@@ -2,9 +2,12 @@ use std::sync::{Arc, Mutex};
 
 use pristimer_core::{Command, Phase, PomodoroConfig, SystemClock, TimerRuntime, TimerSnapshot, TimerState};
 use pristimer_store::Store;
+#[cfg(desktop)]
 use tauri::menu::{CheckMenuItem, Menu, MenuItem};
+#[cfg(desktop)]
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager};
+#[cfg(desktop)]
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_notification::NotificationExt;
 
@@ -213,13 +216,16 @@ fn show_fatal_dialog(message: &str) {
 }
 
 fn build_app() -> tauri::Builder<tauri::Wry> {
-    tauri::Builder::default()
+    // autostart 插件仅桌面有意义（移动端没有"开机自启"概念），按目标平台条件注册。
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_autostart::init(
-            MacosLauncher::LaunchAgent,
-            None,
-        ))
+        .plugin(tauri_plugin_notification::init());
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_autostart::init(
+        MacosLauncher::LaunchAgent,
+        None,
+    ));
+    builder
         // 关窗 = 隐藏到托盘，后台继续计时；真正退出走托盘菜单的「退出」。
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -365,61 +371,10 @@ fn build_app() -> tauri::Builder<tauri::Wry> {
             //    （托盘、菜单、系统集成）出问题都不会让它变成"启动了却没有窗口"。
             place_main_window(app.handle());
 
-            // 6. 托盘：左键单击恢复窗口，右键菜单（显示 / 开机自启 / 退出）。
-            let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
-            let autostart_item = CheckMenuItem::with_id(
-                app,
-                "autostart",
-                "开机自启",
-                true,
-                app.autolaunch().is_enabled().unwrap_or(false),
-                None::<&str>,
-            )?;
-            let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &autostart_item, &quit_item])?;
-            let autostart_for_menu = autostart_item.clone();
-            // 图标缺失（打包异常、精简过的资源）不该让托盘构建失败并把整个
-            // 启动链带下去 —— 没有图标的托盘总比没有托盘强，日志里留一句就够了。
-            let mut tray = TrayIconBuilder::with_id("main")
-                .tooltip("PrisTimer")
-                .menu(&menu)
-                .show_menu_on_left_click(false);
-            match app.default_window_icon() {
-                Some(icon) => tray = tray.icon(icon.clone()),
-                None => log::log("托盘图标缺失，使用无图标托盘"),
-            }
-            tray
-                .on_menu_event(move |app, event| match event.id.as_ref() {
-                    "show" => show_main_window(app),
-                    "autostart" => {
-                        let manager = app.autolaunch();
-                        let enable = !manager.is_enabled().unwrap_or(false);
-                        let result = if enable {
-                            manager.enable()
-                        } else {
-                            manager.disable()
-                        };
-                        if result.is_ok() {
-                            let _ = autostart_for_menu.set_checked(enable);
-                        } else {
-                            log::log("切换开机自启失败");
-                        }
-                    }
-                    "quit" => app.exit(0),
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    // 左键单击托盘图标 = 弹回主窗口（菜单留给右键）。
-                    if let tauri::tray::TrayIconEvent::Click {
-                        button: tauri::tray::MouseButton::Left,
-                        button_state: tauri::tray::MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        show_main_window(tray.app_handle());
-                    }
-                })
-                .build(app)?;
+            // 6. 托盘（仅桌面）：左键单击恢复窗口，右键菜单（显示 / 开机自启 / 退出）。
+            //    移动端没有托盘与"开机自启"概念，整块编译期剔除。
+            #[cfg(desktop)]
+            setup_tray(app.handle())?;
 
             Ok(())
         })
@@ -451,5 +406,66 @@ fn build_app() -> tauri::Builder<tauri::Wry> {
             window::set_mini_shell,
             window::animate_window_to
         ])
+}
+
+/// 托盘装配（仅桌面编译）：菜单三项 + 图标 + 左键单击弹回。
+/// 移动端无托盘概念，本函数整体不参与编译。
+#[cfg(desktop)]
+fn setup_tray(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
+    let autostart_item = CheckMenuItem::with_id(
+        app,
+        "autostart",
+        "开机自启",
+        true,
+        app.autolaunch().is_enabled().unwrap_or(false),
+        None::<&str>,
+    )?;
+    let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_item, &autostart_item, &quit_item])?;
+    let autostart_for_menu = autostart_item.clone();
+    // 图标缺失（打包异常、精简过的资源）不该让托盘构建失败并把整个
+    // 启动链带下去 —— 没有图标的托盘总比没有托盘强，日志里留一句就够了。
+    let mut tray = TrayIconBuilder::with_id("main")
+        .tooltip("PrisTimer")
+        .menu(&menu)
+        .show_menu_on_left_click(false);
+    match app.default_window_icon() {
+        Some(icon) => tray = tray.icon(icon.clone()),
+        None => log::log("托盘图标缺失，使用无图标托盘"),
+    }
+    tray
+        .on_menu_event(move |app, event| match event.id.as_ref() {
+            "show" => show_main_window(app),
+            "autostart" => {
+                let manager = app.autolaunch();
+                let enable = !manager.is_enabled().unwrap_or(false);
+                let result = if enable {
+                    manager.enable()
+                } else {
+                    manager.disable()
+                };
+                if result.is_ok() {
+                    let _ = autostart_for_menu.set_checked(enable);
+                } else {
+                    log::log("切换开机自启失败");
+                }
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            // 左键单击托盘图标 = 弹回主窗口（菜单留给右键）。
+            if let tauri::tray::TrayIconEvent::Click {
+                button: tauri::tray::MouseButton::Left,
+                button_state: tauri::tray::MouseButtonState::Up,
+                ..
+            } = event
+            {
+                show_main_window(tray.app_handle());
+            }
+        })
+        .build(app)?;
+    Ok(())
 }
 

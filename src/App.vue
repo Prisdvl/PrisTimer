@@ -482,6 +482,7 @@ let unlistenPomodoro: UnlistenFn | null = null;
 
 onMounted(async () => {
   document.addEventListener("keydown", onKeydown);
+  document.addEventListener("contextmenu", onContextmenu);
   // 窗口几何已由 Rust 在 show 之前摆好（见 lib.rs 的 place_main_window），
   // 前端不再参与启动期恢复 —— 这里只补运行时约束。
   syncMiniClass();
@@ -550,8 +551,22 @@ watch(
   },
 );
 
+// ---------------------------------------------------------------------------
+// 右键菜单缺陷修复：WebView2 默认把"网页右键"（重新加载 / 检查元素等）带进
+// 桌面应用，出戏且暴露调试面。全局拦截 contextmenu —— 唯一例外是输入框
+// （input / textarea / contenteditable），那里保留系统菜单（复制粘贴是功能）。
+// ---------------------------------------------------------------------------
+function onContextmenu(e: MouseEvent): void {
+  const target = e.target as HTMLElement | null;
+  if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+    return;
+  }
+  e.preventDefault();
+}
+
 onUnmounted(() => {
   document.removeEventListener("keydown", onKeydown);
+  document.removeEventListener("contextmenu", onContextmenu);
   unlisten?.();
   unlistenPomodoro?.();
   clearTimeout(appliedTimer);
