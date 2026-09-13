@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { timerApi, windowApi, type PomodoroConfig, type PomodoroPhase, type PomodoroStatus, type Recovered, type TimerSnapshot } from "./api";
+import { timerApi, type PomodoroStatus, type Recovered, type TimerSnapshot } from "./api";
 import { formatClock, formatDuration, toDayKey } from "./date";
 import { toast } from "./composables/useToast";
+import { useTheme } from "./composables/useTheme";
+import { usePomodoro, PHASE_LABEL } from "./composables/usePomodoro";
+import { useTags } from "./composables/useTags";
+import { useMiniWindow } from "./composables/useMiniWindow";
 import AnalogDial from "./components/AnalogDial.vue";
 import IntroSplash from "./components/IntroSplash.vue";
 import ParticleField from "./components/ParticleField.vue";
@@ -12,7 +16,6 @@ import StatsView from "./components/StatsView.vue";
 import TitleBar from "./components/TitleBar.vue";
 import ToastHost from "./components/ToastHost.vue";
 import TypewriterHint from "./components/TypewriterHint.vue";
-import { TAG_PRESETS } from "./tags";
 
 type Tab = "timer" | "stats";
 
@@ -56,69 +59,18 @@ watch(tab, () => {
 /** 启动画面（Scramble 标题 + 粒子）：播完一次就摘掉，全程 ≤0.5s。 */
 const introDone = ref(false);
 
-/** 背景主题：deep 深空（默认）/ void 虚空 / dawn 晨雾（浅色）/
- *  aurora 极光 / ember 暮霞（第 21 轮）/ paper 纸墨（第 21 轮，浅色）。
- *  切换只换 data-theme + 一组 CSS 变量（@property 注册过，0.9s 平滑插值），
- *  特色动效层由 SmokeField 按 theme 交叉换景。 */
-type BgTheme = "deep" | "void" | "dawn" | "aurora" | "ember" | "paper";
-
-const THEMES: Array<{ id: BgTheme; label: string; swatch: string }> = [
-  { id: "deep", label: "深空", swatch: "linear-gradient(135deg,#6082ff,#967dff 60%,#46a5e1)" },
-  { id: "void", label: "虚空", swatch: "linear-gradient(135deg,#0a0b10,#343060)" },
-  { id: "dawn", label: "晨雾", swatch: "linear-gradient(135deg,#eef3fa,#9fc6e8)" },
-  { id: "aurora", label: "极光", swatch: "linear-gradient(135deg,#2fd48e,#1f8fa8)" },
-  { id: "ember", label: "暮霞", swatch: "linear-gradient(135deg,#ff8a50,#d45a7a 62%,#5a3a4e)" },
-  { id: "paper", label: "纸墨", swatch: "linear-gradient(135deg,#f4f1ea,#b0a890)" },
-];
-
-const THEME_KEY = "pristimer.theme";
-
-/** 迁移：旧版值（aurora=出厂绿 / abyss=深海）都已退役，统一落到 deep。 */
-function loadTheme(): BgTheme {
-  const raw = localStorage.getItem(THEME_KEY);
-  if (raw === "void" || raw === "dawn" || raw === "aurora" || raw === "deep") return raw;
-  return "deep";
-}
-
-const theme = ref<BgTheme>(loadTheme());
-const currentThemeLabel = computed(
-  () => THEMES.find((t) => t.id === theme.value)?.label ?? "深空",
-);
-const currentThemeSwatch = computed(
-  () => THEMES.find((t) => t.id === theme.value)?.swatch ?? "",
-);
-
-/** 底部主题菜单（第 21 轮：主题键从裸色点升级为底部菜单 + 弹出面板）。 */
-const themeMenuOpen = ref(false);
-const themeCtlRoot = ref<HTMLElement | null>(null);
-
-function pickTheme(id: BgTheme): void {
-  theme.value = id;
-  themeMenuOpen.value = false;
-}
-
-function onGlobalPointerDown(e: PointerEvent): void {
-  if (!themeMenuOpen.value) return;
-  if (themeCtlRoot.value && !themeCtlRoot.value.contains(e.target as Node)) {
-    themeMenuOpen.value = false;
-  }
-}
-
-function onGlobalKeydown(e: KeyboardEvent): void {
-  if (e.key === "Escape") themeMenuOpen.value = false;
-}
-
-function syncTheme(): void {
-  document.documentElement.setAttribute("data-theme", theme.value);
-}
-watch(theme, (t) => {
-  try {
-    localStorage.setItem(THEME_KEY, t);
-  } catch {
-    /* 写不进去就本次会话生效 */
-  }
-  syncTheme();
-});
+// 背景主题与底部主题菜单：纯逻辑在 composables/useTheme.ts
+const {
+  THEMES,
+  theme,
+  currentThemeLabel,
+  currentThemeSwatch,
+  themeMenuOpen,
+  pickTheme,
+  onGlobalPointerDown,
+  onGlobalKeydown,
+  syncTheme,
+} = useTheme();
 
 /** 冥想模式：呼吸圆环 + 慢速粒子背景。纯氛围层，不改变计时行为。 */
 const MEDITATION_KEY = "pristimer.meditation";
@@ -145,145 +97,25 @@ const snapshot = ref<TimerSnapshot>({
 const recovered = ref<Recovered | null>(null);
 const bannerDismissed = ref(false);
 
-// ---------------------------------------------------------------------------
-// 番茄钟。循环推进在 Rust 侧完成（到点自动切阶段 + 系统通知），
-// 前端只负责展示阶段与已完成的番茄数，以及一个开关。
-// ---------------------------------------------------------------------------
-
-const pomodoro = ref<PomodoroStatus | null>(null);
-
-/** 番茄循环参数（Rust 侧持久化），设置面板读写它。 */
-const pomoConfig = ref<PomodoroConfig | null>(null);
-const pomoSettingsOpen = ref(false);
-const pomoFeedback = ref<"" | "saved" | "error">("");
-
-/** 设置面板的草稿：分钟为单位的四个输入框，点「应用」才真正下发。 */
-const pomoDraft = ref({ focusMin: 25, shortMin: 5, longMin: 15, rounds: 4 });
-
-function syncDraft(config: PomodoroConfig): void {
-  pomoDraft.value = {
-    focusMin: Math.round(config.focusMs / 60_000),
-    shortMin: Math.round(config.shortBreakMs / 60_000),
-    longMin: Math.round(config.longBreakMs / 60_000),
-    rounds: config.focusBeforeLong,
-  };
-}
-
-async function applyPomoConfig(): Promise<void> {
-  const d = pomoDraft.value;
-  // 数字输入框可能被清空成 NaN / 越界 —— 夹取到合法区间，UI 层先兜一道，
-  // Rust 侧 validate 仍是最终防线。
-  const clampMin = (v: number) => Math.min(120, Math.max(1, Math.round(v) || 1));
-  const config: PomodoroConfig = {
-    focusMs: clampMin(d.focusMin) * 60_000,
-    shortBreakMs: clampMin(d.shortMin) * 60_000,
-    longBreakMs: clampMin(d.longMin) * 60_000,
-    focusBeforeLong: Math.min(8, Math.max(2, Math.round(d.rounds) || 2)),
-  };
-  try {
-    pomodoro.value = await timerApi.pomodoroConfigSet(config);
-    pomoConfig.value = config;
-    syncDraft(config); // 把夹取后的值回填输入框
-    pomoFeedback.value = "saved";
-  } catch (err) {
-    console.error("保存番茄配置失败", err);
-    pomoFeedback.value = "error";
-    toast.error("番茄参数保存失败", String(err));
-  }
-  setTimeout(() => (pomoFeedback.value = ""), 2200);
-}
-
-// ---------------------------------------------------------------------------
-// 番茄循环序列（Draggable）：把当前配置画成一张卡片序列
-// [番茄钟, 短休息, ×(N-1), 长休息]。
-//
-// 引擎的节奏是固定的「专注 ↔ 短休交替、N 轮后长休」，所以可拖的只有
-// 「长休息」这一张卡：把它拖到第 k 个番茄钟后面 = 长休前有 k 轮专注，
-// 也就是改 focusBeforeLong。拖其它卡没有对应语义 —— 整排轻晃一下弹回原位。
-// ---------------------------------------------------------------------------
-
-type SeqKind = "focus" | "short" | "long";
-interface SeqCard {
-  id: string;
-  kind: SeqKind;
-  minutes: number;
-}
-const SEQ_LABEL: Record<SeqKind, string> = {
-  focus: "番茄钟",
-  short: "短休息",
-  long: "长休息",
-};
-
-const seqCards = computed<SeqCard[]>(() => {
-  const c = pomoConfig.value;
-  if (!c) return [];
-  const focus = Math.round(c.focusMs / 60_000);
-  const short = Math.round(c.shortBreakMs / 60_000);
-  const long = Math.round(c.longBreakMs / 60_000);
-  const n = c.focusBeforeLong;
-  const cards: SeqCard[] = [];
-  for (let i = 0; i < n; i += 1) {
-    cards.push({ id: `f${i}`, kind: "focus", minutes: focus });
-    if (i < n - 1) cards.push({ id: `s${i}`, kind: "short", minutes: short });
-  }
-  cards.push({ id: "long", kind: "long", minutes: long });
-  return cards;
-});
-
-/** 拖拽用的本地副本：拖着的时候配置还没变，列表先跟着手走。 */
-const seqLocal = ref<SeqCard[]>([]);
-watch(
-  seqCards,
-  (cards) => {
-    seqLocal.value = [...cards];
-  },
-  { immediate: true },
-);
-
-const dragFrom = ref(-1);
-const seqSnapping = ref(false);
-let snapTimer: number | undefined;
-
-/** 不合法的拖法：整排晃一下、列表弹回规范序。 */
-function snapBackSeq(): void {
-  seqLocal.value = [...seqCards.value];
-  seqSnapping.value = true;
-  clearTimeout(snapTimer);
-  snapTimer = window.setTimeout(() => (seqSnapping.value = false), 340);
-}
-
-function onDropSeq(to: number): void {
-  const from = dragFrom.value;
-  dragFrom.value = -1;
-  if (from < 0 || from === to) return;
-  const list = [...seqLocal.value];
-  const [moved] = list.splice(from, 1);
-  list.splice(to, 0, moved);
-  // 只有「长休息换位置」能映射回配置；其余排法一律弹回
-  if (moved.kind !== "long") return snapBackSeq();
-  const rounds = list
-    .slice(0, list.findIndex((c) => c.kind === "long"))
-    .filter((c) => c.kind === "focus").length;
-  if (rounds < 2 || rounds > 8) return snapBackSeq();
-  seqLocal.value = list;
-  void persistRounds(rounds);
-}
-
-/** 落库走既有配置通道（Rust 侧校验 + 持久化），成功后全 UI 自动跟进。 */
-async function persistRounds(rounds: number): Promise<void> {
-  const c = pomoConfig.value;
-  if (!c) return;
-  const next = { ...c, focusBeforeLong: rounds };
-  try {
-    pomodoro.value = await timerApi.pomodoroConfigSet(next);
-    pomoConfig.value = next;
-    syncDraft(next);
-    toast.info("长休位置已更新", `每 ${rounds} 轮专注后进入长休`);
-  } catch (err) {
-    toast.error("保存失败", String(err));
-    seqLocal.value = [...seqCards.value];
-  }
-}
+// 番茄钟状态/设置面板/循环序列拖拽：纯逻辑在 composables/usePomodoro.ts
+const {
+  pomodoro,
+  pomoConfig,
+  pomoSettingsOpen,
+  pomoFeedback,
+  pomoDraft,
+  syncDraft,
+  applyPomoConfig,
+  seqLocal,
+  dragFrom,
+  seqSnapping,
+  onDropSeq,
+  togglePomodoro,
+  totalDots,
+  litDots,
+  phaseAccent,
+  SEQ_LABEL,
+} = usePomodoro();
 
 // ---------------------------------------------------------------------------
 // 计时页底部的使用提示（Tabs 滑动指示器）。
@@ -304,48 +136,7 @@ const TIPS: Array<{ label: string; text: string }> = [
   },
 ];
 const tipIdx = ref(0);
-
-const PHASE_LABEL: Record<PomodoroPhase, string> = {
-  focus: "专注中",
-  short_break: "短休息",
-  long_break: "长休息",
-};
-
-/** 阶段强调色：专注用状态色，休息换蓝紫，一眼区分「该干劲」还是「该放松」。 */
-const PHASE_ACCENT: Record<PomodoroPhase, string> = {
-  focus: "", // 走默认 accent
-  short_break: "#5aa7ff",
-  long_break: "#b58cff",
-};
-
-async function togglePomodoro(): Promise<void> {
-  const enable = !(pomodoro.value?.enabled ?? false);
-  try {
-    pomodoro.value = await timerApi.pomodoroSet(enable);
-    toast.info(
-      enable ? "已开启番茄钟" : "已关闭番茄钟",
-      enable
-        ? `${Math.round((pomoConfig.value?.focusMs ?? 0) / 60_000)} 分钟专注 + 循环休息`
-        : "回到自由计时",
-    );
-  } catch (err) {
-    console.error("切换番茄模式失败", err);
-    toast.error("切换番茄钟失败", String(err));
-  }
-}
-
-/** 进度条上的番茄圆点：长休期间全亮，其余显示本轮已完成的数量。 */
-const totalDots = computed(() => pomoConfig.value?.focusBeforeLong ?? 4);
-const litDots = computed(() => {
-  if (!pomodoro.value?.enabled) return 0;
-  if (pomodoro.value.phase === "long_break") return totalDots.value;
-  return pomodoro.value.completedFocus % totalDots.value;
-});
-
-const phaseAccent = computed(() => {
-  const phase = pomodoro.value?.phase;
-  return (phase && PHASE_ACCENT[phase]) || null;
-});
+// PHASE_LABEL / togglePomodoro / 圆点与阶段色：见 composables/usePomodoro.ts
 
 const STATE_LABEL: Record<string, string> = {
   idle: "空闲",
@@ -397,111 +188,20 @@ const focusHint = ref<string | null>(null);
 // 而历史会话上的 tag 是既成事实，改名只影响"下一条"，不回改历史。
 // ---------------------------------------------------------------------------
 
-const TAGS_KEY = "pristimer.tags";
-/** 上限纯防御：胶囊行换到第三排就开始难看了。 */
-const MAX_TAGS = 12;
-
-function loadTags(): string[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(TAGS_KEY) ?? "null") as unknown;
-    if (Array.isArray(raw)) {
-      const clean = raw
-        .filter((t): t is string => typeof t === "string")
-        .map((t) => t.trim().slice(0, 20))
-        .filter((t) => t.length > 0);
-      // 去重：手改过的 localStorage 可能塞进重复项
-      if (clean.length) return [...new Set(clean)].slice(0, MAX_TAGS);
-    }
-  } catch {
-    /* 坏数据回默认预设 */
-  }
-  return [...TAG_PRESETS];
-}
-
-const tags = ref<string[]>(loadTags());
-const selectedTag = ref<string | null>(null);
-const tagInput = ref("");
-
-function saveTags(): void {
-  try {
-    localStorage.setItem(TAGS_KEY, JSON.stringify(tags.value));
-  } catch {
-    /* 隐身模式等写不进去的场景：本次会话内生效即可 */
-  }
-}
-
-/** 选中即切、再点取消。 */
-async function applyTag(tag: string | null): Promise<void> {
-  try {
-    selectedTag.value = await timerApi.tagSet(tag);
-    tagInput.value = "";
-  } catch (err) {
-    console.error("设置科目标签失败", err);
-  }
-}
-
-/** 回车提交输入框：已存在的直接选中，新的先入列再选中。 */
-async function submitTag(): Promise<void> {
-  const value = tagInput.value.trim().slice(0, 20);
-  if (!value) return;
-  if (!tags.value.includes(value)) {
-    if (tags.value.length >= MAX_TAGS) {
-      toast.error("标签太多了", `最多 ${MAX_TAGS} 个，先删掉几个再加`);
-      return;
-    }
-    tags.value = [...tags.value, value];
-    saveTags();
-  }
-  await applyTag(value);
-}
-
-// ---- 重命名与删除 ---------------------------------------------------------
-
-/** 正在内联重命名的标签（null = 没有）。同一时刻只会有一个。 */
-const editingTag = ref<string | null>(null);
-const editingText = ref("");
-
-async function startTagEdit(tag: string): Promise<void> {
-  editingTag.value = tag;
-  editingText.value = tag;
-  await nextTick();
-  // v-if 刚插入的 input 不会自动聚焦，只能自己找回来；同时只有一个，全局选择器够用
-  const el = document.querySelector<HTMLInputElement>(".tag-edit");
-  el?.focus();
-  el?.select();
-}
-
-function cancelTagEdit(): void {
-  editingTag.value = null;
-}
-
-/** 提交重命名。空串 / 未改动 / 撞名都安全退出，不留半截状态。 */
-async function commitTagEdit(): Promise<void> {
-  const from = editingTag.value;
-  if (from === null) return;
-  const next = editingText.value.trim().slice(0, 20);
-  editingTag.value = null;
-  if (!next || next === from) return;
-  if (tags.value.includes(next)) {
-    toast.error("标签重复", `「${next}」已经在列表里了`);
-    return;
-  }
-  const wasSelected = selectedTag.value === from;
-  tags.value = tags.value.map((t) => (t === from ? next : t));
-  saveTags();
-  // 改的正是当前选中的那个 → 同步跟进，否则下一条会话会挂着一个已不存在的名字
-  if (wasSelected) await applyTag(next);
-  toast.success("已重命名", `${from} → ${next}`);
-}
-
-/** 删除标签；删掉的正好是选中的那个时顺手清空选择。 */
-async function removeTag(tag: string): Promise<void> {
-  if (!tags.value.includes(tag)) return;
-  tags.value = tags.value.filter((t) => t !== tag);
-  saveTags();
-  if (selectedTag.value === tag) await applyTag(null);
-  toast.info("已删除标签", tag);
-}
+// 科目标签集合与选中态：纯逻辑在 composables/useTags.ts
+const {
+  tags,
+  selectedTag,
+  tagInput,
+  editingTag,
+  editingText,
+  applyTag,
+  submitTag,
+  startTagEdit,
+  cancelTagEdit,
+  commitTagEdit,
+  removeTag,
+} = useTags();
 
 /** 四种状态各配一个强调色，盘面、圆点、主按钮共用。
  *  番茄休息阶段优先用阶段色（蓝 / 紫），让「放松时段」有别于专注。 */
@@ -690,447 +390,29 @@ function onWindowClose(): void {
   toast.info("已收进托盘", "计时会在后台继续，点托盘图标可以叫回来");
 }
 
-// ---------------------------------------------------------------------------
-// 迷你模式：整窗缩成一枚贴边置顶的"组件"（缩小至组件）。
-// 窗口几何全走运行时 API —— tauri.conf 里不能静态写死 minWidth（会把
-// 264px 的小窗挡在门外），全尺寸的最小约束改由 setMinSize 在运行时恢复。
-// ---------------------------------------------------------------------------
-
-const MINI_W = 264;
-const MINI_H = 96;
-/** 迷你形态标志（前端 UI 状态，决定渲染哪套模板）。窗口几何那部分由 Rust 落盘。 */
-const MINI_KEY = "pristimer.mini";
-/** 进入迷你前的常规客户区尺寸 —— 只在「退出迷你」时用得到，属于运行时状态。 */
-const RESTORE_KEY = "pristimer.mini-restore";
-
-const mini = ref(localStorage.getItem(MINI_KEY) === "1");
-
-type WindowModule = typeof import("@tauri-apps/api/window");
-let windowModule: WindowModule | null = null;
-
-/** 惰性加载窗口 API 模块（同时拿到 PhysicalSize 等类型构造器）。 */
-async function winModule(): Promise<WindowModule> {
-  if (!windowModule) windowModule = await import("@tauri-apps/api/window");
-  return windowModule;
-}
-
-/** 位置 (x,y) 是否落在某台显示器的可见范围内（留 40px 容差）。
- *  拔掉显示器 / 改过分辨率后，存下的位置可能跑到屏幕外 —— 那就别恢复。 */
-async function positionVisible(x: number, y: number, w: number, h: number): Promise<boolean> {
-  try {
-    const mod = await winModule();
-    const monitors = await mod.availableMonitors();
-    return monitors.some((m) => {
-      const mx = m.position.x;
-      const my = m.position.y;
-      const mw = m.size.width;
-      const mh = m.size.height;
-      return x + w > mx + 40 && x < mx + mw - 40 && y + h > my + 40 && y < my + mh - 40;
-    });
-  } catch {
-    return false;
-  }
-}
-
-/** 窗口几何分帧插值动画：尺寸走客户区、位置走外框，easeOutCubic 缓出。
- *  ★ 第十六轮性能重构：插值循环挪进 Rust（animate_window_to，原生 SetWindowPos
- *  分帧）—— 旧实现 JS rAF 每帧 2 次 IPC（setSize/setPosition），WebView2 桥的
- *  往返延迟把 16ms/帧预算吃光，是迷你过渡卡顿的根因；现在一次 invoke 完成
- *  整段动画。这里保留 JS 插值作兜底（旧后端/命令缺失时）。 */
-async function animateWindowTo(
-  mod: WindowModule,
-  w: ReturnType<WindowModule["getCurrentWindow"]>,
-  toSize: { w: number; h: number },
-  toPos: { x: number; y: number },
-  durationMs = 320,
-): Promise<void> {
-  try {
-    mm("animate-invoke-start");
-    await windowApi.animateTo({ x: toPos.x, y: toPos.y, w: toSize.w, h: toSize.h, durationMs });
-    mm("animate-invoke-done");
-    return;
-  } catch {
-    /* 原生通道不可用 → 走下面的 JS 插值 */
-  }
-  const fromSize = await w.innerSize();
-  const fromPos = await w.outerPosition();
-  const t0 = performance.now();
-  await new Promise<void>((resolve) => {
-    const step = (): void => {
-      const t = Math.min(1, (performance.now() - t0) / durationMs);
-      const e = 1 - Math.pow(1 - t, 3);
-      void w.setSize(
-        new mod.PhysicalSize(
-          Math.round(fromSize.width + (toSize.w - fromSize.width) * e),
-          Math.round(fromSize.height + (toSize.h - fromSize.height) * e),
-        ),
-      );
-      void w.setPosition(
-        new mod.PhysicalPosition(
-          Math.round(fromPos.x + (toPos.x - fromPos.x) * e),
-          Math.round(fromPos.y + (toPos.y - fromPos.y) * e),
-        ),
-      );
-      if (t < 1) requestAnimationFrame(step);
-      else resolve();
-    };
-    step();
-  });
-}
-
-/** 迷你形态的目标几何：客户区 264×96（物理），位置优先沿用记忆点、否则右下角。 */
-async function miniTarget(
-  mod: WindowModule,
-  w: ReturnType<WindowModule["getCurrentWindow"]>,
-): Promise<{ size: { w: number; h: number }; pos: { x: number; y: number } | null }> {
-  const scale = await w.scaleFactor();
-  const pw = Math.round(MINI_W * scale);
-  const ph = Math.round(MINI_H * scale);
-  try {
-    const savedPos = (await windowApi.get()).mini;
-    if (savedPos && (await positionVisible(savedPos.x, savedPos.y, pw, ph))) {
-      return { size: { w: pw, h: ph }, pos: savedPos };
-    }
-  } catch {
-    /* 读不到就走默认位置 */
-  }
-  try {
-    const monitor = await mod.currentMonitor();
-    if (monitor) {
-      const margin = Math.round(14 * scale);
-      return {
-        size: { w: pw, h: ph },
-        pos: {
-          x: monitor.position.x + monitor.size.width - pw - margin,
-          y: monitor.position.y + monitor.size.height - ph - margin,
-        },
-      };
-    }
-  } catch {
-    /* 连显示器都拿不到就原地收缩 */
-  }
-  return { size: { w: pw, h: ph }, pos: null };
-}
-
-async function enterMiniWindow(animate = false, prep: MiniPrep | null = null): Promise<void> {
-  try {
-    mm("enter-start");
-    const mod = await winModule();
-    const w = mod.getCurrentWindow();
-    // 记住进入前的窗口大小，还原时原样恢复。
-    // 守卫：如果当前已经是组件尺寸（上次关闭时就是迷你态、这次启动直接
-    // 以组件醒来），不能把它存成"恢复尺寸"，否则还原只能回到默认大小。
-    // ★ 尺寸/目标几何优先用淡出期间并行算好的 prep（无磁盘/显示器 IO）。
-    let cur = prep?.kind === "enter" ? prep.cur : null;
-    if (!cur) {
-      const size = await w.innerSize();
-      cur = { w: size.width, h: size.height };
-    }
-    if (cur.w >= 400 && cur.h >= 300) {
-      localStorage.setItem(RESTORE_KEY, JSON.stringify({ w: cur.w, h: cur.h }));
-    }
-    // ★ 4 项窗口属性合并成一次 IPC（逐项 ~21ms × 4 白占关键路径 ~80ms）
-    try {
-      await windowApi.setMiniShell(true);
-    } catch {
-      await w.setResizable(false);
-      await w.setMinSize(null);
-      await w.setAlwaysOnTop(true);
-      await w.setShadow(false);
-    }
-    mm("enter-toggles-done");
-    const target =
-      prep?.kind === "enter" ? prep.target : await miniTarget(mod, w);
-    mm("enter-target-ready");
-    if (animate && target.pos) {
-      await animateWindowTo(mod, w, target.size, target.pos);
-    } else {
-      await w.setSize(new mod.PhysicalSize(target.size.w, target.size.h));
-      if (target.pos) await w.setPosition(new mod.PhysicalPosition(target.pos.x, target.pos.y));
-    }
-  } catch (err) {
-    console.error("进入迷你模式失败", err);
-    toast.error("迷你模式切换失败", String(err));
-  }
-}
-
-async function exitMiniWindow(animate = false, prep: MiniPrep | null = null): Promise<void> {
-  try {
-    mm("exit-start");
-    const mod = await winModule();
-    const w = mod.getCurrentWindow();
-    // ★ 4 项窗口属性合并成一次 IPC（与 enter 对称）
-    try {
-      await windowApi.setMiniShell(false);
-    } catch {
-      await w.setAlwaysOnTop(false);
-      await w.setShadow(true);
-      await w.setMinSize(new mod.LogicalSize(760, 560));
-      await w.setResizable(true);
-    }
-    mm("exit-toggles-done");
-
-    // 1) 尺寸：优先回到进入迷你前的客户区尺寸（prep 已在淡出期间读好）
-    let target = prep?.kind === "exit" ? prep.size : null;
-    if (!target) {
-      const scale = await w.scaleFactor();
-      target = { w: Math.round(900 * scale), h: Math.round(640 * scale) };
-    }
-    // 最小尺寸要先放开，否则下面的 setSize 会被夹到 760×560
-    await w.setMinSize(new mod.LogicalSize(760, 560));
-    await w.setResizable(true);
-
-    // 2) 位置：回到**进入迷你前的常规位置**（记在 Rust 侧，prep 已读好）。
-    //    ★ 少了这一步，"还原"出来的窗口会停在组件待过的那个角落 —— 更糟的是
-    //    紧接着触发的 onMoved 会把角落写进 normal，等于把记忆永久改坏，
-    //    下次启动也在角落里。用户看到的正是"还原后跳到屏幕右下角"。
-    let pos = prep?.kind === "exit" ? prep.pos : null;
-    if (!pos) {
-      // 没有记忆位置（第一次就进了迷你）→ 至少保证窗口完整落在屏幕内
-      const cur = await w.outerPosition();
-      if (!(await positionVisible(cur.x, cur.y, target.w, target.h))) {
-        try {
-          const monitor = await mod.currentMonitor();
-          if (monitor) {
-            pos = {
-              x: monitor.position.x + Math.round((monitor.size.width - target.w) / 2),
-              y: monitor.position.y + Math.round((monitor.size.height - target.h) / 2),
-            };
-          }
-        } catch {
-          /* 连尺寸都拿不到就算了，保持 Windows 给的位置 */
-        }
-      }
-    }
-    mm("exit-target-ready");
-    if (animate) {
-      const cur = await w.outerPosition();
-      await animateWindowTo(mod, w, { w: target.w, h: target.h }, pos ?? { x: cur.x, y: cur.y });
-    } else {
-      await w.setSize(new mod.PhysicalSize(target.w, target.h));
-      if (pos) await w.setPosition(new mod.PhysicalPosition(pos.x, pos.y));
-    }
-  } catch (err) {
-    console.error("退出迷你模式失败", err);
-    toast.error("还原窗口失败", String(err));
-  }
-}
-
-/** 切换形态期间抑制「几何变动 → 自动落盘」。
- *
- *  切换过程中会连续触发 onResized / onMoved，其中间态（例如尺寸已经改小、
- *  位置还没摆好那一帧）并不是用户意图 —— 记下来就把记忆改坏了。 */
-let suppressWinSave = false;
-
-/** 形态切换的内容淡出：几何动画期间两套模板都不该以"被拉伸/压扁"的
- *  中间态示人 —— 先把当前内容淡出（0.18s），动画到位后再切模板进场。 */
-const morphOut = ref(false);
-/** 防连点：一次形态切换没走完不接受下一次。 */
-let morphing = false;
-
-/** 形态切换各阶段的耗时标记（验证/调优用：CDP 里读 window.__mm）。
- *  只在 dev/验证时有意义，生产里多几条数组写入无碍。 */
-function mm(label: string): void {
-  const w = window as unknown as { __mm?: [string, number][] };
-  (w.__mm ??= []).push([label, Math.round(performance.now())]);
-}
-
-/** 迷你形态开关：把迷你态同步到根元素类上 —— html.mini-mode 会禁掉滚动
- *  本身（滚动条已全局取消，见 glass.css），防止小窗内容意外溢出时出现橡皮筋。 */
-function syncMiniClass(): void {
-  document.documentElement.classList.toggle("mini-mode", mini.value);
-}
-
-/** 形态切换的目标几何预备数据：在内容淡出期间并行算好，
- *  让几何动画只等纯设置类 IPC，不等磁盘/显示器查询。 */
-type MiniPrep =
-  | { kind: "enter"; scale: number; target: { size: { w: number; h: number }; pos: { x: number; y: number } | null }; cur: { w: number; h: number } }
-  | { kind: "exit"; scale: number; size: { w: number; h: number }; pos: { x: number; y: number } | null };
-
-/** 进迷你前的准备：目标尺寸/位置 + 记忆当前常规尺寸。 */
-async function prepMiniEnter(
-  mod: WindowModule,
-  w: ReturnType<WindowModule["getCurrentWindow"]>,
-): Promise<MiniPrep> {
-  mm("prep-enter-start");
-  const scale = await w.scaleFactor();
-  const cur = await w.innerSize();
-  const target = await miniTarget(mod, w);
-  mm("prep-enter-done");
-  return {
-    kind: "enter",
-    scale,
-    target,
-    cur: { w: cur.width, h: cur.height },
-  };
-}
-
-/** 还原窗口前的准备：目标尺寸（localStorage）+ 位置（Rust 侧 normal 记忆）。 */
-async function prepMiniExit(
-  w: ReturnType<WindowModule["getCurrentWindow"]>,
-): Promise<MiniPrep> {
-  mm("prep-exit-start");
-  const scale = await w.scaleFactor();
-  // 尺寸：优先回到进入迷你前的客户区尺寸
-  let size = { w: Math.round(900 * scale), h: Math.round(640 * scale) };
-  try {
-    const saved = JSON.parse(localStorage.getItem(RESTORE_KEY) ?? "null") as {
-      w: number;
-      h: number;
-    } | null;
-    if (saved && saved.w >= 400 && saved.h >= 300) size = saved;
-  } catch {
-    /* 存了坏数据就走默认尺寸 */
-  }
-  // 位置：回到进入迷你前的常规位置（记在 Rust 侧），跑出屏幕则放弃
-  let pos: { x: number; y: number } | null = null;
-  try {
-    const n = (await windowApi.get()).normal;
-    if (n && (await positionVisible(n.x, n.y, n.w, n.h))) pos = { x: n.x, y: n.y };
-  } catch {
-    /* 没有记忆位置就交给还原路径兜底 */
-  }
-  mm("prep-exit-done");
-  return { kind: "exit", scale, size, pos };
-}
-
-async function toggleMini(): Promise<void> {
-  if (morphing) return;
-  const next = !mini.value;
-  morphing = true;
-  mm("click");
-  localStorage.setItem(MINI_KEY, next ? "1" : "0");
-  suppressWinSave = true;
-  try {
-    // ⓪ 与淡出并行的准备工作：目标几何查询（磁盘/显示器 IO）不占动画关键路径
-    const mod0 = await winModule();
-    const w0 = mod0.getCurrentWindow();
-    const prep: Promise<MiniPrep | null> =
-      next ? prepMiniEnter(mod0, w0) : prepMiniExit(w0);
-    // ① 当前内容淡出（避免几何动画中模板被压扁的变形感）
-    morphOut.value = true;
-    await new Promise((r) => setTimeout(r, 190));
-    mm("fade-done");
-    // ② 窗口几何分帧插值到目标形态（~320ms）
-    const ready = await prep;
-    if (next) await enterMiniWindow(true, ready);
-    else await exitMiniWindow(true, ready);
-    mm("geom-done");
-    // ③ 切模板：迷你进场走 mini-in 缩放弹出，还原走常规内容 rise
-    mini.value = next;
-    syncMiniClass();
-    morphOut.value = false;
-    // 先让 Rust 知道形态（下次启动才能在 show 之前摆对几何 + 换圆角半径），
-    // 再把这**一次切换的结果**主动写一次 —— 不等防抖，中间态一律不写。
-    await windowApi.save({ miniMode: next });
-    await persistWinState();
-  } catch {
-    /* 非 Tauri 环境：失败也要保证 UI 形态正确 */
-    mini.value = next;
-    syncMiniClass();
-    morphOut.value = false;
-  } finally {
-    morphing = false;
-    // 放开自动落盘。等一拍再放：切换期间的事件是异步投递的，
-    // 立刻放开会把最后几个中间事件又收进来。
-    window.setTimeout(() => {
-      suppressWinSave = false;
-    }, 360);
-  }
-}
+// 迷你模式与窗口几何：纯逻辑在 composables/useMiniWindow.ts
+const {
+  mini,
+  morphOut,
+  toggleMini,
+  syncMiniClass,
+  closeToTray,
+  enterMiniWindow,
+  ensureNormalMinSize,
+  watchWindowPersistence,
+} = useMiniWindow();
 
 /** 迷你组件的状态文案：番茄开启时优先显示阶段（该干劲还是该放松）。 */
 const miniLabel = computed(() => {
   if (pomodoro.value?.enabled) return PHASE_LABEL[pomodoro.value.phase];
   return STATE_LABEL[snapshot.value.state] ?? snapshot.value.state;
 });
-
-/** 迷你组件上的「收进托盘」：窗口藏起来，计时继续（与标题栏关闭同一条链路）。 */
-async function closeToTray(): Promise<void> {
-  try {
-    const mod = await winModule();
-    await mod.getCurrentWindow().close();
-  } catch (err) {
-    console.error("收进托盘失败", err);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// 窗口状态记忆：几何存进 Rust 侧（应用数据目录的 window.json），**启动时的恢复
-// 由 Rust 在 show 之前完成** —— 所以这里只有「上报」，没有「恢复」。
-//
-// 前端不参与启动期恢复是刻意的：WebView2 把页面加载完要好几秒（窗口隐藏期间
-// 还会被节流到十几秒），那时窗口早该出现在用户眼前了。让前端去摆位，就会
-// 先露出默认位置的窗口、再跳过去。
-//
-// 坐标系：尺寸用 innerSize（与 Rust 的 set_size 同为「客户区」），位置用
-// outerPosition（与 set_position 同为「外框左上角」）。混用会让窗口每次
-// 重启长大一圈边框 16×9。
-// ---------------------------------------------------------------------------
-
-async function persistWinState(): Promise<void> {
-  try {
-    const mod = await winModule();
-    const w = mod.getCurrentWindow();
-    // 最小化时必须直接跳过：此刻 innerSize / outerPosition 返回的是 Windows 的
-    // 哨兵值（位置 -32000,-32000、尺寸小到 138×15），存进去就把"记忆的几何"毁了 ——
-    // 下次启动还会被屏幕可见性校验判为屏幕外而丢弃，等于把记忆清空。
-    if (await w.isMinimized()) return;
-    if (mini.value) {
-      // 迷你态：尺寸固定，只有位置是用户调过的
-      const pos = await w.outerPosition();
-      await windowApi.save({ mini: { x: pos.x, y: pos.y } });
-      return;
-    }
-    // 不能只信 isMaximized()：实测它在某些时序下会返回 false（窗口明明已经最大化），
-    // 那时就会把"铺满屏幕"的矩形当成常规几何存下来，下次启动直接开成满屏。
-    // 所以补一个几何判据：外框几乎盖满当前显示器也算最大化。
-    let maximized = await w.isMaximized();
-    if (!maximized) {
-      const monitor = await mod.currentMonitor().catch(() => null);
-      if (monitor) {
-        const outer = await w.outerSize();
-        maximized =
-          outer.width >= monitor.size.width - 8 && outer.height >= monitor.size.height - 8;
-      }
-    }
-    if (maximized) {
-      // 最大化时不记几何，保留上一次的常规几何，只标 max
-      await windowApi.save({ maximized: true });
-      return;
-    }
-    const size = await w.innerSize();
-    // 再补一道：尺寸小到不像常规窗口时坚决不写 normal。
-    // Rust 侧加载时也会丢弃这种值，但那时 normal 已经被污染 —— 记忆的位置
-    // 就再也回不来了（"还原后跑到右下角"的另一条成因）。
-    if (size.width < 400 || size.height < 300) return;
-    const pos = await w.outerPosition();
-    await windowApi.save({
-      normal: { w: size.width, h: size.height, x: pos.x, y: pos.y },
-      maximized: false,
-    });
-  } catch {
-    /* 窗口 API 不可用（非 Tauri 环境）就算了 */
-  }
-}
-
-let saveWinTimer: number | null = null;
-function scheduleWinSave(): void {
-  // 形态切换中：中间态不是用户意图，直接丢掉
-  if (suppressWinSave) return;
-  if (saveWinTimer !== null) clearTimeout(saveWinTimer);
-  saveWinTimer = window.setTimeout(() => {
-    saveWinTimer = null;
-    void persistWinState();
-  }, 500);
-}
+// 「收进托盘」已在 composables/useMiniWindow.ts（closeToTray）
 
 const showBanner = computed(() => recovered.value !== null && !bannerDismissed.value);
 
 let unlisten: UnlistenFn | null = null;
 let unlistenPomodoro: UnlistenFn | null = null;
-let unlistenWinMove: UnlistenFn | null = null;
-let unlistenWinResize: UnlistenFn | null = null;
 
 onMounted(async () => {
   // 主题菜单的外点关闭 / Escape 关闭（第 21 轮）
@@ -1147,23 +429,11 @@ onMounted(async () => {
     await enterMiniWindow();
   } else {
     // 常规形态的最小尺寸在运行时补（配置里不静态写死，给迷你小窗让路）
-    try {
-      const mod = await winModule();
-      await mod.getCurrentWindow().setMinSize(new mod.LogicalSize(760, 560));
-    } catch {
-      /* 非 Tauri 环境：忽略 */
-    }
+    await ensureNormalMinSize();
   }
 
   // 窗口几何变动 → 防抖落盘（迷你态只记位置，全尺寸记整套状态）
-  try {
-    const mod = await winModule();
-    const w = mod.getCurrentWindow();
-    unlistenWinMove = await w.onMoved(() => scheduleWinSave());
-    unlistenWinResize = await w.onResized(() => scheduleWinSave());
-  } catch {
-    /* 非 Tauri 环境：忽略 */
-  }
+  await watchWindowPersistence();
 
   // 顶部滚动进度条：滚动/尺寸变化都只触发 rAF 节流的测量
   window.addEventListener("scroll", onScroll, { passive: true });
@@ -1221,11 +491,7 @@ onUnmounted(() => {
   document.removeEventListener("keydown", onGlobalKeydown);
   unlisten?.();
   unlistenPomodoro?.();
-  unlistenWinMove?.();
-  unlistenWinResize?.();
-  if (saveWinTimer !== null) clearTimeout(saveWinTimer);
   clearTimeout(appliedTimer);
-  clearTimeout(snapTimer);
   if (scrollRaf) cancelAnimationFrame(scrollRaf);
   window.removeEventListener("scroll", onScroll);
   window.removeEventListener("resize", onScroll);
