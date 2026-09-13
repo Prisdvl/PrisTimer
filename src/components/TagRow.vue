@@ -104,10 +104,41 @@ const {
   transform: scale(0.95);
 }
 .tag-chip.active {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--accent);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 26%, transparent);
+  border-color: var(--ui-accent);
+  background: color-mix(in srgb, var(--ui-accent) 22%, transparent);
+  color: var(--ui-accent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ui-accent) 32%, transparent);
+  /* 第 23 轮：选中瞬间整颗胶囊弹跳一下 —— 光换底色不够"被选中"的确认感
+     （老大截图反馈：英语选中后与未选难以区分）。animation 挂在 active 上，
+     类一挂上就播，取消选中再选会重播。 */
+  animation: chip-pop 0.38s var(--ease-out-back);
+}
+@keyframes chip-pop {
+  0% {
+    transform: scale(0.9);
+  }
+  55% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+/* 选中态前导点：胶囊内亮起一颗同色圆点，静态时也能一眼认出选中项 */
+.tag-chip.active::before {
+  content: "";
+  flex: none;
+  width: 0.42em;
+  height: 0.42em;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 6px currentColor;
+  animation: dot-in 0.32s var(--ease-out-back);
+}
+@keyframes dot-in {
+  from {
+    transform: scale(0);
+  }
 }
 /* 自定义标签可能很长（上限 20 字）：文字截断而不是把整行撑爆 */
 .chip-text {
@@ -147,7 +178,7 @@ const {
 .tag-edit {
   width: 7em;
   padding: 0.22rem 0.7rem;
-  border: 1px solid var(--accent);
+  border: 1px solid var(--ui-accent);
   border-radius: 999px;
   background: var(--glass-bg-strong);
   color: var(--ink);
@@ -155,7 +186,7 @@ const {
   font-size: 0.75rem;
   text-align: center;
   outline: none;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-accent) 18%, transparent);
 }
 /* ★ 宽度必须放得下 placeholder「自定义」三个汉字。
    原来是 5ch —— ch 是数字 "0" 的宽度（0.75rem 下约 6.7px），5ch ≈ 33px，
@@ -183,7 +214,7 @@ const {
 .tag-input:focus {
   outline: none;
   border-style: solid;
-  border-color: var(--accent);
+  border-color: var(--ui-accent);
   width: 9em;
   background: var(--glass-bg);
 }
@@ -192,6 +223,10 @@ const {
 @media (prefers-reduced-motion: reduce) {
   .tag-chip {
     transition: none;
+  }
+  .tag-chip.active,
+  .tag-chip.active::before {
+    animation: none;
   }
 }
 </style>

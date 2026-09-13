@@ -557,8 +557,7 @@ async function exportReport(): Promise<void> {
       <article
         v-for="card in 4"
         :key="card"
-        class="card sheen"
-        :style="{ animationDelay: `${(card - 1) * 60}ms` }"
+        class="card"
       >
         <template v-if="card === 1">
           <p class="label">今日专注</p>
@@ -982,7 +981,8 @@ async function exportReport(): Promise<void> {
   color: var(--ink-soft);
 }
 .seg button.active {
-  color: #3ecf8e;
+  /* 第 23 轮：裸 hex 换令牌 —— 硬编码绿不随主题变，晨雾/纸墨下刺眼又扎眼 */
+  color: var(--ui-accent, #3ecf8e);
 }
 
 /* 范围切换：整图旧数据快速下沉淡出、新图重放进场动画 */
@@ -1021,8 +1021,8 @@ async function exportReport(): Promise<void> {
   border-color: color-mix(in srgb, var(--ink) 16%, transparent);
 }
 .goals-toggle.active {
-  color: var(--accent, #3ecf8e);
-  border-color: color-mix(in srgb, var(--accent, #3ecf8e) 40%, transparent);
+  color: var(--ui-accent, #3ecf8e);
+  border-color: color-mix(in srgb, var(--ui-accent, #3ecf8e) 40%, transparent);
   transform: rotate(90deg);
 }
 .goals-panel {
@@ -1060,7 +1060,7 @@ async function exportReport(): Promise<void> {
   transition: border-color 0.2s ease;
 }
 .goal-input:focus {
-  border-color: color-mix(in srgb, var(--accent, #3ecf8e) 55%, transparent);
+  border-color: color-mix(in srgb, var(--ui-accent, #3ecf8e) 55%, transparent);
 }
 .goal-unit {
   font-size: 0.7rem;
@@ -1080,15 +1080,15 @@ async function exportReport(): Promise<void> {
   color: #6fe0a8;
 }
 .goal-bar.done {
-  background: var(--accent, #3ecf8e);
-  box-shadow: 0 0 14px color-mix(in srgb, var(--accent, #3ecf8e) 75%, transparent);
+  background: var(--ui-accent, #3ecf8e);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ui-accent, #3ecf8e) 75%, transparent);
 }
 li.done .tag-name {
-  color: var(--accent, #3ecf8e);
+  color: var(--ui-accent, #3ecf8e);
 }
 .goal-check {
   margin-left: 0.35rem;
-  color: var(--accent, #3ecf8e);
+  color: var(--ui-accent, #3ecf8e);
 }
 .goal-empty {
   margin: 0;
@@ -1164,8 +1164,8 @@ li.done .tag-name {
   transition: background 0.3s ease, box-shadow 0.3s ease;
 }
 .goal-dots i.on {
-  background: var(--accent, #3ecf8e);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--accent, #3ecf8e) 60%, transparent);
+  background: var(--ui-accent, #3ecf8e);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--ui-accent, #3ecf8e) 60%, transparent);
 }
 .rv-goal-days {
   font-size: 0.72rem;
@@ -1173,7 +1173,7 @@ li.done .tag-name {
   color: var(--ink-dim);
 }
 .rv-goal-days b {
-  color: var(--accent, #3ecf8e);
+  color: var(--ui-accent, #3ecf8e);
 }
 
 /* ------------------------------------------------------------------ 科目统计 */
@@ -1238,7 +1238,7 @@ li.done .tag-name {
   opacity: 1;
 }
 .row-edit:hover {
-  color: var(--accent, #3ecf8e);
+  color: var(--ui-accent, #3ecf8e);
   background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 .rename-panel {
@@ -1276,7 +1276,7 @@ li.done .tag-name {
   color: var(--ink-dim);
 }
 .hour-peak b {
-  color: #3ecf8e;
+  color: var(--ui-accent, #3ecf8e);
   font-variant-numeric: tabular-nums;
 }
 .tag-name {
@@ -1295,8 +1295,8 @@ li.done .tag-name {
   display: block;
   height: 100%;
   border-radius: 999px;
-  background: var(--accent, #3ecf8e);
-  box-shadow: 0 0 8px color-mix(in srgb, var(--accent, #3ecf8e) 45%, transparent);
+  background: var(--ui-accent, #3ecf8e);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ui-accent, #3ecf8e) 45%, transparent);
   transition: width 0.7s var(--ease-out-expo, ease);
 }
 .tag-value {

@@ -316,7 +316,7 @@ function monthValue(span: { key: string; start: number; end: number }): string {
   color: var(--ink-dim);
 }
 .summary b {
-  color: var(--accent);
+  color: var(--ui-accent);
   font-variant-numeric: tabular-nums;
 }
 .summary .gap {
@@ -435,8 +435,8 @@ function monthValue(span: { key: string; start: number; end: number }): string {
   background: #2b9c67;
 }
 .level-4 {
-  background: #3ecf8e;
-  box-shadow: 0 0 6px rgb(62 207 142 / 0.35);
+  background: var(--ui-accent, #3ecf8e);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--ui-accent) 35%, transparent);
 }
 
 /* ---------------------------------------------------------- 每月时长条 */
@@ -487,9 +487,9 @@ function monthValue(span: { key: string; start: number; end: number }): string {
   opacity: 0.3;
 }
 .month-strip li.on {
-  border-color: var(--accent);
-  background: rgb(62 207 142 / 0.12);
-  box-shadow: 0 0 14px rgb(62 207 142 / 0.2);
+  border-color: var(--ui-accent);
+  background: color-mix(in srgb, var(--ui-accent) 12%, transparent);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--ui-accent) 20%, transparent);
 }
 .month-strip li.empty {
   opacity: 0.55;
@@ -516,7 +516,7 @@ function monthValue(span: { key: string; start: number; end: number }): string {
   transition: color var(--t-base) ease;
 }
 .month-strip li.on .m-value {
-  color: var(--accent);
+  color: var(--ui-accent);
 }
 
 /* ---------------------------------------------------------------- 图例 */

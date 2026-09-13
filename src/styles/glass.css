@@ -101,6 +101,16 @@
   inherits: true;
   initial-value: rgb(255 255 255 / 0.13);
 }
+/* 第 23 轮：UI 强调色与状态色分离 —— --accent 跟随计时/番茄状态变
+   （idle 灰、paused 琥珀、休息蓝紫），统计图表/标签选中/热力图等
+   「信息强调」若也挂它，空闲时就一整片灰（老大反馈"图表灰色不易
+   辨别、标签选中不明显"的同根因）。--ui-accent 恒定品牌绿，浅色
+   主题覆盖深色版（绿对晨雾/宣纸底只有 ~1.7:1，同 --hand-running 策略）。 */
+@property --ui-accent {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #3ecf8e;
+}
 /* 第 20 轮：指针/刻度主题化 —— 四主题各配一套表盘前景色，
    注册 <color> 后随 :root 过渡一起丝滑插值（指针 fill 过渡由
    AnalogDial 自己的 0.45s 承担，这里保证的是「切主题」那一刻）。 */
@@ -302,6 +312,9 @@
   /* 第 22 轮：运行指针深墨绿 —— 状态绿 #3ecf8e 对晨雾底仅 1.7:1，
      压深后 ≥6:1。不注册 <color>（默认走 --accent 兜底，只有浅色主题覆盖） */
   --hand-running: #12603e;
+  /* 第 23 轮：运行态时钟数字与 UI 强调色同浴 —— 浅底上绿字/绿图表同步压深 */
+  --clock-running: #12603e;
+  --ui-accent: #12603e;
   --tick: rgb(30 42 64 / 0.2);
   --tick-strong: rgb(30 42 64 / 0.42);
   --dial-particle: #46608e;
@@ -372,6 +385,9 @@
   /* 第 22 轮（老大指定）：纸墨运行态指针用浓墨黑 —— 宣纸底上绿指针
      浮得像没画上去；墨黑对比 ~15:1，与「纸墨」的墨语系也一致 */
   --hand-running: #1a1712;
+  /* 第 23 轮：运行态数字浓墨黑（同指针语系）；UI 强调色深墨绿 */
+  --clock-running: #1a1712;
+  --ui-accent: #146b4a;
   --tick: rgb(64 56 44 / 0.22);
   --tick-strong: rgb(64 56 44 / 0.44);
   --dial-particle: #1a1712;

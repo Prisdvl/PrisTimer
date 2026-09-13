@@ -113,8 +113,8 @@ function smooth(pts: Pt[]): string {
   >
     <defs>
       <linearGradient id="trend-area" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" style="stop-color: var(--accent)" stop-opacity="0.22" />
-        <stop offset="1" style="stop-color: var(--accent)" stop-opacity="0" />
+        <stop offset="0" style="stop-color: var(--ui-accent)" stop-opacity="0.22" />
+        <stop offset="1" style="stop-color: var(--ui-accent)" stop-opacity="0" />
       </linearGradient>
     </defs>
 
@@ -183,7 +183,7 @@ function smooth(pts: Pt[]): string {
 
 /* ------------------------------------------------------------------ 柱状 */
 .bar {
-  fill: color-mix(in srgb, var(--accent) 45%, transparent);
+  fill: color-mix(in srgb, var(--ui-accent) 45%, transparent);
   transform-box: fill-box;
   transform-origin: 50% 100%;
   animation: bar-in 0.5s var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1)) backwards;
@@ -191,10 +191,10 @@ function smooth(pts: Pt[]): string {
   transition: fill 0.2s ease, x 0.45s var(--ease-out-expo, ease), y 0.4s var(--ease-out-expo, ease), width 0.45s var(--ease-out-expo, ease), height 0.4s var(--ease-out-expo, ease);
 }
 .bar:hover {
-  fill: var(--accent);
+  fill: var(--ui-accent);
 }
 .bar.today {
-  fill: var(--accent);
+  fill: var(--ui-accent);
 }
 .bar.zero {
   fill: color-mix(in srgb, var(--ink) 8%, transparent);
@@ -208,7 +208,7 @@ function smooth(pts: Pt[]): string {
 /* ------------------------------------------------------------------ 折线 */
 /* pathLength="1" 把描线归一化：dasharray 1 + dashoffset 1→0 即描线动画 */
 .line-path {
-  stroke: var(--accent);
+  stroke: var(--ui-accent);
   stroke-dasharray: 1;
   animation: draw 0.7s var(--ease-out-expo, cubic-bezier(0.16, 1, 0.3, 1)) 0.05s backwards;
 }
@@ -221,7 +221,7 @@ function smooth(pts: Pt[]): string {
   animation: fade 0.5s ease 0.45s backwards;
 }
 .dot {
-  fill: var(--accent);
+  fill: var(--ui-accent);
   transform-box: fill-box;
   transform-origin: center;
   animation: pop 0.35s var(--ease-out-back, ease) backwards;
@@ -229,7 +229,7 @@ function smooth(pts: Pt[]): string {
   transition: fill 0.2s ease, stroke-width 0.2s ease, cx 0.45s var(--ease-out-expo, ease), cy 0.45s var(--ease-out-expo, ease);
 }
 .dot.today {
-  stroke: rgb(62 207 142 / 0.35);
+  stroke: color-mix(in srgb, var(--ui-accent) 35%, transparent);
   stroke-width: 3;
 }
 @keyframes pop {

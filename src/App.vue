@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { timerApi, type PomodoroStatus, type Recovered, type TimerSnapshot } from "./api";
 import { formatClock, formatDuration, toDayKey } from "./date";
@@ -117,11 +117,81 @@ function onKeydown(e: KeyboardEvent): void {
     return;
   }
   if (e.key === "Escape") {
-    // 主题菜单的 Esc 由 ThemeMenu 自己处理，这里管剩下的
-    if (mini.value) void toggleMini();
+    // 主题菜单的 Esc 由 ThemeMenu 自己处理，这里管剩下的。
+    // 第 23 轮：沉浸模式优先退出 —— 沉浸下没有别的可见出口依赖它。
+    if (immersive.value) immersive.value = false;
+    else if (uiConsoleOpen.value) uiConsoleOpen.value = false;
+    else if (mini.value) void toggleMini();
     else if (pomoSettingsOpen.value) pomoSettingsOpen.value = false;
   }
 }
+
+// ---------------------------------------------------------------------------
+// 组件显隐控制台 + 沉浸模式（第 23 轮 R7/R8/R9）。
+//
+// 显隐分两层：
+//   · uiFlags —— 「隐藏但一键找回」：标签栏 / 快捷时长区 / 侧栏状态 / 使用提示，
+//     右下角控制台随时可再开；
+//   · immersive —— 「只留时钟与动效」：隐藏包括 tabs / 控制按钮在内的一切外壳，
+//     入口在控制台里，出口是右上角幽灵钮或 Esc（不占主要位置，不影响观感）。
+// 全部 localStorage 持久化，与主题/简约模式互相独立。
+// ---------------------------------------------------------------------------
+
+const UI_FLAG_KEYS = {
+  tags: "pristimer.ui.tags",
+  presets: "pristimer.ui.presets",
+  rail: "pristimer.ui.rail",
+  tips: "pristimer.ui.tips",
+} as const;
+
+function loadFlag(key: string, dflt = true): boolean {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? dflt : v === "1";
+  } catch {
+    return dflt;
+  }
+}
+
+const uiFlags = reactive({
+  tags: loadFlag(UI_FLAG_KEYS.tags),
+  presets: loadFlag(UI_FLAG_KEYS.presets),
+  rail: loadFlag(UI_FLAG_KEYS.rail),
+  tips: loadFlag(UI_FLAG_KEYS.tips),
+});
+
+const UI_ROWS: Array<{ key: keyof typeof UI_FLAG_KEYS; label: string }> = [
+  { key: "tags", label: "标签栏" },
+  { key: "presets", label: "快捷时长区" },
+  { key: "rail", label: "侧栏状态" },
+  { key: "tips", label: "使用提示" },
+];
+
+watch(uiFlags, () => {
+  try {
+    for (const [k, key] of Object.entries(UI_FLAG_KEYS)) {
+      localStorage.setItem(key, uiFlags[k as keyof typeof uiFlags] ? "1" : "0");
+    }
+  } catch {
+    /* 写不进去就本次会话生效 */
+  }
+});
+
+const immersive = ref(loadFlag("pristimer.immersive", false));
+watch(immersive, (on) => {
+  try {
+    localStorage.setItem("pristimer.immersive", on ? "1" : "0");
+  } catch {
+    /* 同上 */
+  }
+  if (on) {
+    // 沉浸只对计时页有意义；若正停在统计页，先切回去
+    tab.value = "timer";
+    uiConsoleOpen.value = false;
+  }
+});
+
+const uiConsoleOpen = ref(false);
 
 // ---------------------------------------------------------------------------
 // 计时页底部的使用提示（Tabs 滑动指示器）。
@@ -389,6 +459,7 @@ function onWindowClose(): void {
 const {
   mini,
   morphOut,
+  geomAnimating,
   toggleMini,
   syncMiniClass,
   closeToTray,
@@ -492,7 +563,7 @@ onUnmounted(() => {
 
 <template>
   <div class="app" :class="{ meditating: meditation }" :style="{ '--accent': accent }">
-    <SmokeField v-if="!simpleMode" :paused="mini" :theme="theme" :active="isRunning" />
+    <SmokeField v-if="!simpleMode" :paused="mini || geomAnimating" :theme="theme" :active="isRunning" />
     <!-- 顶部滚动进度条：替代已取消的右侧滚动条（fixed 于窗口顶缘） -->
     <span
       class="scroll-progress"
@@ -507,11 +578,20 @@ onUnmounted(() => {
       </div>
     </Transition>
     <ToastHost />
+    <!-- 沉浸模式唯一的常驻出口：右上角幽灵钮，平时近乎隐形，hover 才显形 -->
+    <button
+      v-if="immersive && !mini"
+      class="immersive-exit"
+      title="退出沉浸模式（Esc）"
+      @click="immersive = false"
+    >
+      ×
+    </button>
     <!-- 启动动画：Scramble 解码标题 + 粒子背景，~1.5s 后摘掉 -->
     <IntroSplash v-if="!introDone && !mini" @done="introDone = true" />
 
     <div class="shell" :class="{ mini, 'morph-out': morphOut }">
-      <TitleBar v-if="!mini" @close="onWindowClose" @mini="toggleMini" />
+      <TitleBar v-if="!mini && !immersive" @close="onWindowClose" @mini="toggleMini" />
 
       <MiniWidget
         v-if="mini"        :display="display"
@@ -524,7 +604,7 @@ onUnmounted(() => {
       />
 
       <div v-else class="stage">
-        <nav class="tabs">
+        <nav v-if="!immersive" class="tabs">
           <!-- 滑动的玻璃药丸：两个标签共用一块高光，切换时它平移过去 ——
                "一个按钮融进另一个按钮"在标签切换上最直观的表达 -->
           <span class="pill" :style="{ transform: `translateX(${tab === 'timer' ? 0 : 100}%)` }" />
@@ -549,12 +629,12 @@ onUnmounted(() => {
 
           <main v-else key="timer" class="timer">
             <!-- 开始专注瞬间的打字机提示（浮在计时页顶端，不占布局） -->
-            <div class="focus-hint" aria-live="polite">
+            <div v-if="!immersive" class="focus-hint" aria-live="polite">
               <TypewriterHint v-if="focusHint" :text="focusHint" @done="focusHint = null" />
             </div>
 
             <!-- 侧栏状态栏（Spotlight）：今日专注 + 番茄数。绝对定位不挤占表盘 -->
-            <aside class="rail" aria-label="今日状态">
+            <aside v-if="uiFlags.rail && !immersive" class="rail" aria-label="今日状态">
               <div class="spot" @mousemove="spotMove">
                 <span class="spot-light" />
                 <p class="spot-label">今日专注</p>
@@ -602,7 +682,7 @@ onUnmounted(() => {
               </div>
             </AnalogDial>
 
-            <div class="controls">
+            <div v-if="!immersive" class="controls">
               <button
                 class="action liquid"
                 :class="{ live: !isRunning }"
@@ -636,11 +716,11 @@ onUnmounted(() => {
               <button class="ghost" @click="resetTimer">重置</button>
             </div>
 
-            <TagRow />
+            <TagRow v-if="uiFlags.tags && !immersive" />
 
-            <PomodoroPanel />
+            <PomodoroPanel v-if="!immersive" />
 
-            <div class="presets">
+            <div v-if="uiFlags.presets && !immersive" class="presets">
               <button
                 class="pomo-toggle"
                 :class="{ active: pomodoro?.enabled }"
@@ -695,7 +775,7 @@ onUnmounted(() => {
             </div>
 
             <!-- 使用提示：Tabs 滑动指示器 + 内容淡入 -->
-            <div class="tips">
+            <div v-if="uiFlags.tips && !immersive" class="tips">
               <div class="tips-nav">
                 <span
                   class="tips-indicator"
@@ -716,6 +796,34 @@ onUnmounted(() => {
             </div>
           </main>
         </Transition>
+      </div>
+      <!-- 右下角组件控制台：显隐组件 + 沉浸模式入口（迷你态/沉浸态不显示） -->
+      <div v-if="!mini && !immersive" class="ui-console">
+        <Transition name="fade">
+          <div v-if="uiConsoleOpen" class="ui-panel" @click.stop>
+            <p class="ui-panel-title">显示组件</p>
+            <label v-for="row in UI_ROWS" :key="row.key" class="ui-row">
+              <span>{{ row.label }}</span>
+              <i
+                class="switch"
+                :class="{ on: uiFlags[row.key] }"
+                role="switch"
+                :aria-checked="uiFlags[row.key]"
+                @click.prevent="uiFlags[row.key] = !uiFlags[row.key]"
+              />
+            </label>
+            <button class="immersive-enter" @click="immersive = true">
+              沉浸模式
+            </button>
+          </div>
+        </Transition>
+        <button
+          class="ui-fab"
+          title="显示组件 / 沉浸模式"
+          @click.stop="uiConsoleOpen = !uiConsoleOpen"
+        >
+          <span class="ui-fab-icon" aria-hidden="true" />
+        </button>
       </div>
     </div>
   </div>
@@ -1049,7 +1157,9 @@ onUnmounted(() => {
   opacity: 0;
 }
 .running .clock {
-  color: var(--accent);
+  /* 第 23 轮：数字也主题化 —— 深色主题跟状态色，浅色主题（dawn/paper）
+     在 glass.css 覆盖 --clock-running 为深色（绿字浅底对比同指针一样不够） */
+  color: var(--clock-running, var(--accent));
 }
 .state {
   display: flex;
@@ -1723,5 +1833,155 @@ onUnmounted(() => {
   .tips {
     display: none;
   }
+}
+
+/* ================================================================ 组件控制台
+   右下角一枚玻璃圆钮 + 上方弹出的小面板。z-index 高于内容低于 Toast。 */
+.ui-console {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+.ui-fab {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--glass-border);
+  border-radius: 50%;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-edge), 0 8px 22px rgb(0 0 0 / 0.3);
+  cursor: pointer;
+  transition:
+    border-color var(--t-base) var(--ease-out-expo),
+    transform var(--t-base) var(--ease-out-back),
+    box-shadow var(--t-base) ease;
+}
+.ui-fab:hover {
+  border-color: var(--glass-border-strong);
+  transform: translateY(-2px);
+}
+.ui-fab-icon,
+.ui-fab-icon::before {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid var(--ink-dim);
+  transition: border-color var(--t-base) ease;
+}
+.ui-fab-icon {
+  border-radius: 3px;
+  position: relative;
+}
+.ui-fab-icon::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 1.5px;
+  opacity: 0.55;
+}
+.ui-fab:hover .ui-fab-icon,
+.ui-fab:hover .ui-fab-icon::before {
+  border-color: var(--ui-accent);
+}
+.ui-panel {
+  min-width: 168px;
+  padding: 0.7rem 0.85rem 0.75rem;
+  border: 1px solid var(--glass-border);
+  border-radius: 14px;
+  background: var(--glass-bg-deep);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-edge), 0 16px 40px rgb(0 0 0 / 0.38);
+}
+.ui-panel-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  color: var(--ink-dim);
+}
+.ui-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.2rem;
+  padding: 0.3rem 0;
+  font-size: 0.78rem;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.ui-row .switch {
+  flex: none;
+  width: 30px;
+  height: 17px;
+  border-radius: 999px;
+  background: rgb(128 128 128 / 0.32);
+  position: relative;
+  transition: background var(--t-base) ease;
+}
+.ui-row .switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.9);
+  transition: transform var(--t-base) var(--ease-out-back);
+}
+.ui-row .switch.on {
+  background: var(--ui-accent);
+}
+.ui-row .switch.on::after {
+  transform: translateX(13px);
+}
+.immersive-enter,
+.immersive-exit {
+  margin-top: 0.55rem;
+  width: 100%;
+  padding: 0.36rem 0;
+  border: 1px solid color-mix(in srgb, var(--ui-accent) 45%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--ui-accent) 14%, transparent);
+  color: var(--ui-accent);
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+  transition:
+    background var(--t-base) ease,
+    border-color var(--t-base) ease,
+    color var(--t-base) ease;
+}
+.immersive-enter:hover {
+  background: color-mix(in srgb, var(--ui-accent) 26%, transparent);
+}
+/* 沉浸退出幽灵钮：右上角，平时 8% 透明度几乎隐形，hover 才浮现 */
+.immersive-exit {
+  position: fixed;
+  top: 12px;
+  right: 14px;
+  z-index: 60;
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgb(128 128 128 / 0.14);
+  color: var(--ink-dim);
+  font-size: 1rem;
+  line-height: 1;
+  opacity: 0.16;
+  transition: opacity var(--t-base) ease, background var(--t-base) ease;
+}
+.immersive-exit:hover {
+  opacity: 0.85;
+  background: rgb(128 128 128 / 0.3);
 }
 </style>

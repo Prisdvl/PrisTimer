@@ -253,6 +253,10 @@ export function useMiniWindow() {
   /** 形态切换的内容淡出：几何动画期间两套模板都不该以"被拉伸/压扁"的
    *  中间态示人 —— 先把当前内容淡出（0.18s），动画到位后再切模板进场。 */
   const morphOut = ref(false);
+  /** 几何动画进行中（第 23 轮）：App 用它在 morph 期间暂停 SmokeField ——
+   *  背景烟层在 .shell 外面，内容淡出时它还在满帧重绘，是 resize 窗口
+   *  每帧事务背后的额外合成负担。 */
+  const geomAnimating = ref(false);
   /** 防连点：一次形态切换没走完不接受下一次。 */
   let morphing = false;
 
@@ -337,6 +341,7 @@ export function useMiniWindow() {
         next ? prepMiniEnter(mod0, w0) : prepMiniExit(w0);
       // ① 当前内容淡出（避免几何动画中模板被压扁的变形感）
       morphOut.value = true;
+      geomAnimating.value = true;
       await new Promise((r) => setTimeout(r, 190));
       mm("fade-done");
       // ② 窗口几何分帧插值到目标形态（~320ms）
@@ -348,6 +353,7 @@ export function useMiniWindow() {
       mini.value = next;
       syncMiniClass();
       morphOut.value = false;
+      geomAnimating.value = false;
       // 先让 Rust 知道形态（下次启动才能在 show 之前摆对几何 + 换圆角半径），
       // 再把这**一次切换的结果**主动写一次 —— 不等防抖，中间态一律不写。
       await windowApi.save({ miniMode: next });
@@ -357,6 +363,7 @@ export function useMiniWindow() {
       mini.value = next;
       syncMiniClass();
       morphOut.value = false;
+      geomAnimating.value = false;
     } finally {
       morphing = false;
       // 放开自动落盘。等一拍再放：切换期间的事件是异步投递的，
@@ -472,6 +479,7 @@ export function useMiniWindow() {
   return {
     mini,
     morphOut,
+    geomAnimating,
     toggleMini,
     syncMiniClass,
     closeToTray,

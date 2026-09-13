@@ -296,7 +296,7 @@ pub(crate) async fn animate_window_to(
 ) -> Result<(), String> {
     #[cfg(windows)]
     {
-        use std::time::{Duration, Instant};
+        use std::time::Instant;
         use windows_sys::Win32::Foundation::RECT;
         use windows_sys::Win32::Graphics::Dwm::DwmFlush;
         use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -333,44 +333,62 @@ pub(crate) async fn animate_window_to(
             // 外框 − 客户区 的差值（无边框窗全部在右侧/下方）
             let dw = (wr.right - wr.left - (cr.right - cr.left)) as f64;
             let dh = (wr.bottom - wr.top - (cr.bottom - cr.top)) as f64;
-                let dur = (duration_ms.max(1) as f64) / 1000.0;
-                let t0 = Instant::now();
-                loop {
-                    let step_start = Instant::now();
-                    let t = ((step_start - t0).as_secs_f64() / dur).min(1.0);
-                    let e = 1.0 - (1.0 - t).powi(3);
-                    let cw = from_w + (w as f64 - from_w) * e;
-                    let ch = from_h + (h as f64 - from_h) * e;
-                    let ox = from_x + (x as f64 - from_x) * e;
-                    let oy = from_y + (y as f64 - from_y) * e;
+            let dur = (duration_ms.max(1) as f64) / 1000.0;
+            let t0 = Instant::now();
+            // 上一帧实际应用的四元组：整像素量化后没变化就跳过事务（第 23 轮）
+            let mut last_applied: Option<(i32, i32, i32, i32)> = None;
+            loop {
+                let step_start = Instant::now();
+                let t = ((step_start - t0).as_secs_f64() / dur).min(1.0);
+                // ★ 第 23 轮：easeOutCubic → easeInOutCubic。easeOut 在 t=0 的
+                //   瞬时速度是均速的 3 倍 —— 大距离 morph（1300×960 → 264×96）
+                //   第一步就跳出去一大块，观感是"猛地一拽"；easeInOut 起步加速，
+                //   峰值速度降到均速 2 倍，头尾都柔。
+                let e = if t < 0.5 {
+                    4.0 * t * t * t
+                } else {
+                    1.0 - (-2.0 * t + 2.0).powi(3) / 2.0
+                };
+                let cw = from_w + (w as f64 - from_w) * e;
+                let ch = from_h + (h as f64 - from_h) * e;
+                let ox = from_x + (x as f64 - from_x) * e;
+                let oy = from_y + (y as f64 - from_y) * e;
+                // 整像素量化后与上帧相同 → 这帧没有可见位移，直接跳过。
+                // easeOut 尾部/量化边界上连续多帧同值，重复事务只会给
+                // WebView2 添乱（还会引发合并跳变），对画面零贡献。
+                let applied = (
+                    ox.round() as i32,
+                    oy.round() as i32,
+                    (cw + dw).round() as i32,
+                    (ch + dh).round() as i32,
+                );
+                if last_applied != Some(applied) || t >= 1.0 {
                     unsafe {
                         SetWindowPos(
                             hwnd,
                             std::ptr::null_mut(),
-                            ox.round() as i32,
-                            oy.round() as i32,
-                            (cw + dw).round() as i32,
-                            (ch + dh).round() as i32,
+                            applied.0,
+                            applied.1,
+                            applied.2,
+                            applied.3,
                             SWP_NOACTIVATE | SWP_NOZORDER,
                         );
                     }
-                    if t >= 1.0 {
-                        break;
-                    }
-                    // ★ 双重节流：最小步进 15ms（≤67fps）+ DwmFlush 对齐合成器 vsync。
-                    //   每次 resize 对 WebView2 都是一次完整的布局+合成事务，实测
-                    //   1ms 步进（~200Hz）会把消息泵淹没 —— 页面 rAF 停摆数百 ms、
-                    //   尾部多步被合并成跳变（观感就是"卡顿"）。60fps 节流后全动画
-                    //   只有 ~19 次事务，间隔充裕，渲染管线零积压。
-                    let budget = Duration::from_millis(15);
-                    let spent = step_start.elapsed();
-                    if spent < budget {
-                        std::thread::sleep(budget - spent);
-                    }
-                    unsafe {
-                        let _ = DwmFlush();
-                    }
+                    last_applied = Some(applied);
                 }
+                if t >= 1.0 {
+                    break;
+                }
+                // ★ 第 23 轮帧步进重构：废弃「sleep(15ms) + DwmFlush」双重节流。
+                //   sleep 到点后 DwmFlush 还要等下一个 vsync —— 若 sleep 结束时
+                //   刚错过 vsync，这一帧就要空等 33ms：帧间隔在 16/33ms 之间
+                //   随机交替，窗口运动一顿一顿（基线探针实测页面 rAF 零卡顿，
+                //   卡的是窗口步进本身的节奏）。现在只用 DwmFlush 对齐 vsync：
+                //   每帧精确一个合成周期，~60fps 等间隔，且绝不淹没 WebView2。
+                unsafe {
+                    let _ = DwmFlush();
+                }
+            }
             Ok(())
         })
         .await
