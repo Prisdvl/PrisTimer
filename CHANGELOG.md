@@ -3,17 +3,19 @@
 本项目的所有显著变更都记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [0.2.0] — 2026-09-13
 
 ### 新增
 
+- **应用内快捷键**：窗口聚焦时空格 = 开始/暂停，Esc = 退出迷你态 / 关设置面板；输入框聚焦时自动让路，修饰键组合不劫持（刻意不做系统级全局热键）
 - **SQLite 自动备份**：每日首次启动用 `VACUUM INTO` 产出一致性快照到 `backups/`，保留最近 7 份；失败仅记日志，绝不阻断启动
 - **发布流水线**：`release.yml` —— 推送 `v*` 标签自动构建 MSI 并发布 GitHub Release
 - 英文版 README（`README.en.md`）与下载指引
 
-### 计划中
+### 工程化
 
-- 键盘快捷键（交互稿评审中）
+- 顶层 Cargo workspace 合并，前端 App.vue / 后端 lib.rs 模块化拆分（视图组件、composable、commands 分域）
+- CI 门禁：Rust 测试 + clippy `-D warnings` + vue-tsc + vitest
 
 ## [0.1.0] — 首个公开版本
 
