@@ -94,7 +94,34 @@ const bannerDismissed = ref(false);
 
 // 番茄钟状态：纯逻辑在 composables/usePomodoro.ts（模块级单例，与 PomodoroPanel 共享）。
 // 阶段条/设置面板/序列卡归 PomodoroPanel，App 只留侧栏与开关要用的部分。
-const { pomodoro, pomoConfig, syncDraft, togglePomodoro, phaseAccent } = usePomodoro();
+const { pomodoro, pomoConfig, pomoSettingsOpen, syncDraft, togglePomodoro, phaseAccent } = usePomodoro();
+
+// ---------------------------------------------------------------------------
+// 键盘快捷键（应用内）：空格 = 开始/暂停，Esc = 退出迷你态 / 关设置面板。
+//
+// 刻意**不做**系统级全局热键：空格若被注册成全局热键，会劫持所有其他
+// 应用里的打字与刷题。窗口聚焦时的空格语义与主按钮完全一致
+// （running → 暂停，其余 → 开始），输入框聚焦时自动让路。
+// ---------------------------------------------------------------------------
+function onKeydown(e: KeyboardEvent): void {
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const target = e.target as HTMLElement | null;
+  if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+    return;
+  }
+  if (e.key === " ") {
+    // 空格默认滚动页面 —— 这里接管为开始/暂停，必须 preventDefault
+    e.preventDefault();
+    if (isRunning.value) void timerApi.pause();
+    else void timerApi.start();
+    return;
+  }
+  if (e.key === "Escape") {
+    // 主题菜单的 Esc 由 ThemeMenu 自己处理，这里管剩下的
+    if (mini.value) void toggleMini();
+    else if (pomoSettingsOpen.value) pomoSettingsOpen.value = false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // 计时页底部的使用提示（Tabs 滑动指示器）。
@@ -383,6 +410,7 @@ let unlisten: UnlistenFn | null = null;
 let unlistenPomodoro: UnlistenFn | null = null;
 
 onMounted(async () => {
+  document.addEventListener("keydown", onKeydown);
   // 窗口几何已由 Rust 在 show 之前摆好（见 lib.rs 的 place_main_window），
   // 前端不再参与启动期恢复 —— 这里只补运行时约束。
   syncMiniClass();
@@ -452,6 +480,7 @@ watch(
 );
 
 onUnmounted(() => {
+  document.removeEventListener("keydown", onKeydown);
   unlisten?.();
   unlistenPomodoro?.();
   clearTimeout(appliedTimer);
