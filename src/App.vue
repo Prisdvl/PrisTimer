@@ -65,7 +65,7 @@ const introDone = ref(false);
 
 // 背景主题：纯逻辑在 composables/useTheme.ts（模块级单例，与 ThemeMenu 共享）。
 // 菜单开合是 ThemeMenu 的私有 UI 态，App 不再关心。
-const { theme, syncTheme } = useTheme();
+const { theme, syncTheme, simpleMode } = useTheme();
 
 /** 冥想模式：呼吸圆环 + 慢速粒子背景。纯氛围层，不改变计时行为。 */
 const MEDITATION_KEY = "pristimer.meditation";
@@ -492,7 +492,7 @@ onUnmounted(() => {
 
 <template>
   <div class="app" :class="{ meditating: meditation }" :style="{ '--accent': accent }">
-    <SmokeField :paused="mini" :theme="theme" :active="isRunning" />
+    <SmokeField v-if="!simpleMode" :paused="mini" :theme="theme" :active="isRunning" />
     <!-- 顶部滚动进度条：替代已取消的右侧滚动条（fixed 于窗口顶缘） -->
     <span
       class="scroll-progress"
@@ -574,6 +574,7 @@ onUnmounted(() => {
               :progress="ARC_PROGRESS"
               :state="snapshot.state"
               :theme="theme"
+              :simple="simpleMode"
             >
               <div class="readout">
                 <div class="clock-window">

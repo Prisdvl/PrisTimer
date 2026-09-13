@@ -27,10 +27,13 @@ const props = defineProps<{
   state: "idle" | "running" | "paused" | "finished";
   /** 当前背景主题（第 20 轮起指针/粒子随主题换色）。 */
   theme?: DialTheme;
+  /** 第 22 轮简约模式：不渲染盘内粒子层。 */
+  simple?: boolean;
 }>();
 
-/** 表盘粒子容器：计时运行时盘内粒子飘动（时间即文字，盘即容器）。 */
-const particlesOn = computed(() => props.state === "running");
+/** 表盘粒子容器：计时运行时盘内粒子飘动（时间即文字，盘即容器）。
+ *  简约模式下整层不挂载（组件级关闭，canvas 不创建、零开销）。 */
+const particlesOn = computed(() => props.state === "running" && !props.simple);
 
 const C = 160; // 盘心
 const R_TICK_OUT = 146;
@@ -130,8 +133,9 @@ watch(minutes, (now, prev) => {
 
     <!-- 粒子容器：运行时粒子在盘内漂移连线（在刻度之上、盘心读数之下，
          不与指针/文字抢焦点；第 20 轮起取色随主题而非状态 —— 状态色
-         交给边框/弧/呼吸光承担，粒子负责"这个主题长这样"） -->
-    <DialParticles :active="particlesOn" :theme="theme" />
+         交给边框/弧/呼吸光承担，粒子负责"这个主题长这样"。
+         第 22 轮：简约模式下整层不挂载） -->
+    <DialParticles v-if="!simple" :active="particlesOn" :theme="theme" />
 
     <!-- 盘心读数由父组件注入（它负责数字补间动画） -->
     <div class="core">
@@ -213,8 +217,11 @@ watch(minutes, (now, prev) => {
   transition: fill 0.45s ease, filter 0.45s ease;
 }
 .running .hand-body {
-  fill: var(--accent);
-  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--accent) 55%, transparent));
+  /* 第 22 轮：运行指针也主题化 —— 默认仍是状态绿（--accent 兜底），
+     浅色主题（dawn/paper）在 glass.css 覆盖 --hand-running 为深色：
+     绿色在浅玻璃底上对比只有 1.7:1，老大实测"启动后看不清"。 */
+  fill: var(--hand-running, var(--accent));
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--hand-running, var(--accent)) 55%, transparent));
 }
 .paused .hand-body {
   fill: var(--hand-paused);

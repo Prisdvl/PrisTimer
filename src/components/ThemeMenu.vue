@@ -10,7 +10,7 @@
 import { onMounted, onUnmounted, ref } from "vue";
 import { useTheme } from "../composables/useTheme";
 
-const { THEMES, theme, currentThemeLabel, currentThemeSwatch, pickTheme } = useTheme();
+const { THEMES, theme, currentThemeLabel, currentThemeSwatch, pickTheme, simpleMode, toggleSimple } = useTheme();
 
 const open = ref(false);
 const root = ref<HTMLElement | null>(null);
@@ -39,6 +39,11 @@ onUnmounted(() => {
 function pick(id: (typeof THEMES)[number]["id"]): void {
   pickTheme(id);
   open.value = false;
+}
+
+// 开关项不收起菜单：让老大能直接看到背景动效实时消失的效果
+function flipSimple(): void {
+  toggleSimple();
 }
 </script>
 
@@ -71,6 +76,12 @@ function pick(id: (typeof THEMES)[number]["id"]): void {
           <i class="sw" :style="{ background: t.swatch }" />
           <span>{{ t.label }}</span>
           <i v-if="theme === t.id" class="check" aria-hidden="true">✓</i>
+        </button>
+        <span class="menu-sep" aria-hidden="true" />
+        <button class="theme-item simple-item" role="switch" :aria-checked="simpleMode" @click="flipSimple">
+          <i class="sw sw-simple" :class="{ on: simpleMode }" />
+          <span>简约模式</span>
+          <i v-if="simpleMode" class="check" aria-hidden="true">✓</i>
         </button>
       </span>
     </Transition>
@@ -179,6 +190,23 @@ function pick(id: (typeof THEMES)[number]["id"]): void {
 .theme-item .check {
   margin-left: auto;
   font-size: 0.68rem;
+}
+/* 第 22 轮：简约模式开关项 —— 与主题列表用分隔线隔开，
+   色点换成状态点（开=accent 绿，关=描边空圈） */
+.menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--glass-border);
+}
+.sw-simple {
+  border: 1px solid var(--glass-border-strong);
+  background: transparent;
+  transition: background var(--t-fast) ease;
+}
+.sw-simple.on {
+  border-color: transparent;
+  background: var(--accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 /* 弹出过渡：从按钮锚点浮起 + 回弹收尾（--ease-out-back 的微过冲） */
 .theme-pop-enter-active {

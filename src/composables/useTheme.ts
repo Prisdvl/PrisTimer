@@ -26,6 +26,7 @@ export const THEMES: Array<{ id: BgTheme; label: string; swatch: string }> = [
 ];
 
 const THEME_KEY = "pristimer.theme";
+const SIMPLE_KEY = "pristimer.simple";
 
 /** 迁移：旧版值（aurora=出厂绿 / abyss=深海）都已退役，统一落到 deep。 */
 function loadTheme(): BgTheme {
@@ -38,6 +39,10 @@ function loadTheme(): BgTheme {
 
 const theme = ref<BgTheme>(loadTheme());
 
+// 第 22 轮：简约模式（老大需求）—— 关掉背景动效层与表盘粒子，
+// 保留玻璃质感。与主题相互独立（任何主题下都可开）。
+const simpleMode = ref(localStorage.getItem(SIMPLE_KEY) === "1");
+
 const currentThemeLabel = computed(
   () => THEMES.find((t) => t.id === theme.value)?.label ?? "深空",
 );
@@ -49,8 +54,15 @@ function pickTheme(id: BgTheme): void {
   theme.value = id;
 }
 
+function toggleSimple(): void {
+  simpleMode.value = !simpleMode.value;
+}
+
 function syncTheme(): void {
   document.documentElement.setAttribute("data-theme", theme.value);
+  // 简约模式挂 data-simple：CSS 侧可用于关掉特色层的过渡残留
+  if (simpleMode.value) document.documentElement.setAttribute("data-simple", "");
+  else document.documentElement.removeAttribute("data-simple");
 }
 
 watch(theme, (t) => {
@@ -58,6 +70,15 @@ watch(theme, (t) => {
     localStorage.setItem(THEME_KEY, t);
   } catch {
     /* 写不进去就本次会话生效 */
+  }
+  syncTheme();
+});
+
+watch(simpleMode, (on) => {
+  try {
+    localStorage.setItem(SIMPLE_KEY, on ? "1" : "0");
+  } catch {
+    /* 同上 */
   }
   syncTheme();
 });
@@ -72,5 +93,7 @@ export function useTheme() {
     currentThemeSwatch,
     pickTheme,
     syncTheme,
+    simpleMode,
+    toggleSimple,
   };
 }

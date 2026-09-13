@@ -299,9 +299,12 @@
   --hand-rest: #2e3850;
   --hand-paused: #a9781f;
   --hand-finished: #2e6fc0;
+  /* 第 22 轮：运行指针深墨绿 —— 状态绿 #3ecf8e 对晨雾底仅 1.7:1，
+     压深后 ≥6:1。不注册 <color>（默认走 --accent 兜底，只有浅色主题覆盖） */
+  --hand-running: #12603e;
   --tick: rgb(30 42 64 / 0.2);
   --tick-strong: rgb(30 42 64 / 0.42);
-  --dial-particle: #5670a8;
+  --dial-particle: #46608e;
 }
 
 /* 极光：绿青底色的夜林上空，烟团是缓缓漂移的极光帷幕（特色动效在
@@ -366,9 +369,12 @@
   --hand-rest: #302c24;
   --hand-paused: #8f6a1a;
   --hand-finished: #3568a8;
+  /* 第 22 轮（老大指定）：纸墨运行态指针用浓墨黑 —— 宣纸底上绿指针
+     浮得像没画上去；墨黑对比 ~15:1，与「纸墨」的墨语系也一致 */
+  --hand-running: #1a1712;
   --tick: rgb(64 56 44 / 0.22);
   --tick-strong: rgb(64 56 44 / 0.44);
-  --dial-particle: #6b6350;
+  --dial-particle: #1a1712;
 }
 
 /* liquid-glass 按钮质感（对齐 shuding/liquid-glass 的容器特征）：
