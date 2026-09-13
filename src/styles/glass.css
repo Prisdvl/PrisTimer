@@ -96,11 +96,6 @@
   inherits: true;
   initial-value: rgb(255 255 255 / 0.18);
 }
-@property --sheen-c {
-  syntax: "<color>";
-  inherits: true;
-  initial-value: rgb(255 255 255 / 0.13);
-}
 /* 第 23 轮：UI 强调色与状态色分离 —— --accent 跟随计时/番茄状态变
    （idle 灰、paused 琥珀、休息蓝紫），统计图表/标签选中/热力图等
    「信息强调」若也挂它，空闲时就一整片灰（老大反馈"图表灰色不易
@@ -191,8 +186,6 @@
   --glass-shadow-lg: 0 22px 64px rgb(0 0 0 / 0.42);
   /* 环境色边缘光：玻璃"吸收"强调色，盘面/数字窗的一圈微光随状态变色 */
   --glass-rim: inset 0 0 0 1px color-mix(in srgb, var(--accent) 9%, transparent);
-  /* 镜面扫光的高光色（浅色主题下换冷蓝灰才有对比） */
-  --sheen-c: rgb(255 255 255 / 0.13);
 
   /* 强调色由 App 按计时状态注入（--accent），这里给一个兜底 */
   --accent: #3ecf8e;
@@ -256,8 +249,7 @@
     --hand-paused 0.9s var(--ease-in-out-soft),
     --hand-finished 0.9s var(--ease-in-out-soft),
     --tick 0.9s var(--ease-in-out-soft),
-    --tick-strong 0.9s var(--ease-in-out-soft),
-    --sheen-c 0.9s var(--ease-in-out-soft);
+    --tick-strong 0.9s var(--ease-in-out-soft);
 }
 
 /* ---------------------------------------------------------------- 主题集 */
@@ -301,7 +293,6 @@
   --glass-bg-deep: rgb(28 40 60 / 0.1);
   --glass-border: rgb(30 42 64 / 0.14);
   --glass-border-strong: rgb(30 42 64 / 0.26);
-  --sheen-c: rgb(96 134 196 / 0.3);
   /* 第 21 轮：浅底指针加深一档（老大实测反馈"启动后不易辨识"）——
      idle 与 rest 都压到对浅玻璃 ≥6.5:1 对比，同时保住 idle 略浅于
      rest 的"松开了"层级；暖墨色相跟随晨雾的墨蓝语系。 */
@@ -377,7 +368,6 @@
   --glass-bg-deep: rgb(60 52 40 / 0.1);
   --glass-border: rgb(64 56 44 / 0.16);
   --glass-border-strong: rgb(64 56 44 / 0.28);
-  --sheen-c: rgb(150 132 100 / 0.28);
   --hand-idle: #4e4839;
   --hand-rest: #302c24;
   --hand-paused: #8f6a1a;
@@ -452,46 +442,6 @@
 .glass-interactive:active:not(:disabled) {
   transform: scale(0.97);
   transition-duration: var(--t-fast);
-}
-
-/* 镜面扫光：一道高光斜掠过玻璃面板，像光从玻璃表面滑过。
-   · 挂在要"表演"的大面板上（.clock-window、统计卡），小控件挂了会吵；
-   · ::after 铺在内容之上（pointer-events:none 不挡交互），overflow:hidden
-     由本类负责 —— 挂载点若依赖可见溢出（下拉/悬浮层）不要挂；
-   · 11s 循环里只有前 1.5s 在掠过，其余时间停在屏外等待 —— 高频但不聒噪；
-   · 高光色走 --sheen-c（已注册 <color>）：晨雾下自动换冷蓝灰，扫光才可见。 */
-.sheen {
-  position: relative;
-  overflow: hidden;
-}
-.sheen::after {
-  content: "";
-  position: absolute;
-  inset: -2px;
-  z-index: 2;
-  pointer-events: none;
-  background: linear-gradient(
-    105deg,
-    transparent 40%,
-    color-mix(in srgb, var(--sheen-c) 55%, transparent) 47%,
-    var(--sheen-c) 50%,
-    color-mix(in srgb, var(--sheen-c) 55%, transparent) 53%,
-    transparent 60%
-  );
-  transform: translateX(-130%) skewX(-8deg);
-  animation: sheen-sweep 11s var(--ease-in-out-soft) infinite;
-  will-change: transform;
-}
-@keyframes sheen-sweep {
-  0% {
-    transform: translateX(-130%) skewX(-8deg);
-  }
-  16% {
-    transform: translateX(130%) skewX(-8deg);
-  }
-  100% {
-    transform: translateX(130%) skewX(-8deg);
-  }
 }
 
 /* --------------------------------------------------------- 3. 全局重置 */
@@ -743,11 +693,6 @@ body {
   /* 主题切换也退化为直接呈现 */
   :root {
     transition: none;
-  }
-  /* 镜面扫光停驻在屏外（元素保持素面） */
-  .sheen::after {
-    animation: none;
-    content: none;
   }
   /* 烟雾/光带的 GSAP 补间由 SmokeField 在 reduced-motion 下直接不启动 */
 }

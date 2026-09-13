@@ -27,18 +27,19 @@
 - **Single-instance guard**: `CreateMutexW` + foreground-window pickup — launching twice just wakes the existing window
 
 ### Interface
-- **Liquid-glass design system**: four-edge highlights + bottom refraction shadow + accent ambient rim light, with periodic specular sheen sweeps across large panels
+- **Liquid-glass design system**: four-edge highlights + bottom refraction shadow + accent ambient rim light
 - **Six themes** (Deep Sky / Void / Dawn / Aurora / Ember / Paper), interpolated via registered `@property` color tokens for a 0.9s silky transition; each theme has its own animated backdrop, and the dial hands, ticks and in-dial particles follow the theme (foreground and background luminance always move in opposite directions for legibility)
 
 | Deep Sky | Void | Dawn | Aurora | Ember | Paper |
 |---|---|---|---|---|---|
 | ![Deep Sky](docs/screenshots/theme-deep.jpg) | ![Void](docs/screenshots/theme-void.jpg) | ![Dawn](docs/screenshots/theme-dawn.jpg) | ![Aurora](docs/screenshots/theme-aurora.jpg) | ![Ember](docs/screenshots/theme-ember.jpg) | ![Paper](docs/screenshots/theme-paper.jpg) |
 
-- **Mini widget**: a 264×96 always-on-top desk companion, animated with native `SetWindowPos` frame-stepped transitions (≤67fps, aligned to DwmFlush)
+- **Mini widget**: a 264×96 always-on-top desk companion, animated with native `SetWindowPos` stepped transitions (pure vsync alignment, easeInOutCubic easing, no-op frames skipped)
+- **Immersive mode & UI console**: hide the entire chrome with one click — clock and backdrop only; a ghost exit button (revealed on hover) or Esc brings it back; a bottom-right glass fab opens a console with four toggles to hide the tag bar / presets / side rail / hint strip, persisted across restarts
 - **Dial particles**: while running, particles drift and connect inside the dial, bouncing off the rim along the surface normal; color follows the theme
 - **Neon buttons** with layered breathing halos — the lit label always points at the next action
 - **Scroll progress bar**: the right-side scrollbar is gone entirely; scroll position is a 2.5px strip along the top edge
-- **Stats view**: yearly heatmap / hourly distribution / trend chart with rolling-number tweens, fully adapted to light themes
+- **Stats view**: yearly heatmap / hourly distribution / trend chart with rolling-number tweens, fully adapted to light themes; charts and tag selection use a constant accent color (never grayed out by the timer state)
 - **Subject tags**: presets + custom entries, inline rename, daily goals
 - **Pomodoro**: phase strip + draggable cycle-sequence cards (drag the long-break card to change rounds) + system notifications on phase change
 

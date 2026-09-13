@@ -3,6 +3,24 @@
 本项目的所有显著变更都记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.4.0] — 2026-09-13
+
+### 新增
+
+- **沉浸模式**：一键隐藏全部外壳组件，仅保留时钟与背景动效；右上角幽灵退出键（平时近乎隐形，悬停显形），Esc 亦可退出；状态持久化，开启时自动回到计时页
+- **界面控制台**：右下角玻璃圆钮展开控制台，四个独立开关自由隐藏标签栏 / 预设区 / 侧栏 / 底部提示条，选择持久化
+
+### 变更
+
+- **图表与标签配色全面主题化**：新增恒定强调色令牌 `--ui-accent`（浅色主题自动换深色），修复空闲态下折线图 / 柱状图 / 热力图 / 标签选中态呈灰色难以辨识的问题；连带清理四处硬编码色值
+- **运行态时钟数字浅色主题压深**（`--clock-running` 令牌）：晨雾 / 纸墨主题下运行数字不再刺眼
+- **标签选中动画**：弹跳入场 + 前导圆点，选中状态一眼可辨
+- **应用图标定稿**：容器定形为正圆，黄金角弧与同宽双环几何不变
+
+### 修复
+
+- **窗口几何动画流畅度**：废弃双重节流改为纯 vsync 对齐步进，缓动改 easeInOutCubic 消除起步猛拽，整像素零位移帧跳过提交；窗口动画期间暂停背景烟层重绘
+
 ## [0.3.1] — 2026-09-13
 
 ### 变更
@@ -67,7 +85,8 @@
 - 前端 vitest 14 例（date / tags / useCountUp）；Rust 测试 50 例
 - 顶层 Cargo workspace（core / store / src-tauri 统一 lock 与 target）
 
-[Unreleased]: https://github.com/Prisdvl/PrisTimer/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/Prisdvl/PrisTimer/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Prisdvl/PrisTimer/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/Prisdvl/PrisTimer/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Prisdvl/PrisTimer/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Prisdvl/PrisTimer/releases/tag/v0.2.0

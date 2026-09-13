@@ -2737,7 +2737,7 @@ checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
 
 [[package]]
 name = "pristimer"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "pristimer-core",
  "pristimer-store",
