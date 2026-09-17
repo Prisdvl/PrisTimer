@@ -140,7 +140,43 @@ export function useMiniWindow() {
     return { size: { w: pw, h: ph }, pos: null };
   }
 
-  async function enterMiniWindow(animate = false, prep: MiniPrep | null = null): Promise<void> {
+  /** 迷你形态的窗口属性（Rust 侧 `set_mini_shell`：一次 IPC 完成 resizable /
+   *  minSize / alwaysOnTop / shadow 四项）。
+   *
+   *  ★ 时机是这一项的全部难点：它必须**早于几何动画** —— 常规最小尺寸不放开、
+   *    resizable 不关掉，紧随其后的 setSize / SetWindowPos 会被夹住（表现为
+   *    "窗口纹丝不动"）；但它与内容淡出**毫无依赖**。所以调用方在淡出开始的
+   *    同一刻就发起它，动画前那一刻才 await —— 实测这项约占关键路径 42ms，
+   *    改并行后直接从关键路径上消失（第 29 轮）。
+   *  ★ exit 方向不含常规最小尺寸：把 760×560 的约束加到 264×96 的窗口上会让
+   *    Windows 立即重排，动画还没开始窗口就先跳大了。那一项后置在
+   *    exitMiniWindow 的几何动画之后。 */
+  async function applyMiniShell(isMini: boolean): Promise<void> {
+    const mod = await winModule();
+    const w = mod.getCurrentWindow();
+    try {
+      await windowApi.setMiniShell(isMini);
+    } catch {
+      /* 原生通道不可用 → 逐项兜底（非 Tauri 环境基本到不了这里） */
+      if (isMini) {
+        await w.setResizable(false);
+        await w.setMinSize(null);
+        await w.setAlwaysOnTop(true);
+        await w.setShadow(false);
+      } else {
+        await w.setAlwaysOnTop(false);
+        await w.setShadow(true);
+        await w.setResizable(true);
+      }
+    }
+  }
+
+  async function enterMiniWindow(
+    animate = false,
+    prep: MiniPrep | null = null,
+    /** 调用方在淡出期间已并行发起的 `applyMiniShell(true)`（见 toggleMini）。 */
+    shellReady: Promise<void> | null = null,
+  ): Promise<void> {
     try {
       mm("enter-start");
       const mod = await winModule();
@@ -157,15 +193,10 @@ export function useMiniWindow() {
       if (cur.w >= 400 && cur.h >= 300) {
         localStorage.setItem(RESTORE_KEY, JSON.stringify({ w: cur.w, h: cur.h }));
       }
-      // ★ 4 项窗口属性合并成一次 IPC（逐项 ~21ms × 4 白占关键路径 ~80ms）
-      try {
-        await windowApi.setMiniShell(true);
-      } catch {
-        await w.setResizable(false);
-        await w.setMinSize(null);
-        await w.setAlwaysOnTop(true);
-        await w.setShadow(false);
-      }
+      // ★ 窗口属性：正常路径下已在淡出期间并行发起（shellReady），这里 await
+      //   通常瞬时返回；「启动即以迷你态醒来」那种直接调用的场景没有 prep，
+      //   就现发一次（结果一样，只是多等这 40ms）。
+      await (shellReady ?? applyMiniShell(true));
       mm("enter-toggles-done");
       const target =
         prep?.kind === "enter" ? prep.target : await miniTarget(mod, w);
@@ -182,20 +213,19 @@ export function useMiniWindow() {
     }
   }
 
-  async function exitMiniWindow(animate = false, prep: MiniPrep | null = null): Promise<void> {
+  async function exitMiniWindow(
+    animate = false,
+    prep: MiniPrep | null = null,
+    /** 调用方在淡出期间已并行发起的 `applyMiniShell(false)`（见 toggleMini）。 */
+    shellReady: Promise<void> | null = null,
+  ): Promise<void> {
     try {
       mm("exit-start");
       const mod = await winModule();
       const w = mod.getCurrentWindow();
-      // ★ 4 项窗口属性合并成一次 IPC（与 enter 对称）
-      try {
-        await windowApi.setMiniShell(false);
-      } catch {
-        await w.setAlwaysOnTop(false);
-        await w.setShadow(true);
-        await w.setMinSize(new mod.LogicalSize(760, 560));
-        await w.setResizable(true);
-      }
+      // ★ 窗口属性（置顶 / 阴影 / 可缩放）并行于内容淡出 —— 与 enter 同一套理由。
+      //   常规最小尺寸**不在这一批里**，见函数末尾。
+      await (shellReady ?? applyMiniShell(false));
       mm("exit-toggles-done");
 
       // 1) 尺寸：优先回到进入迷你前的客户区尺寸（prep 已在淡出期间读好）
@@ -204,9 +234,6 @@ export function useMiniWindow() {
         const scale = await w.scaleFactor();
         target = { w: Math.round(900 * scale), h: Math.round(640 * scale) };
       }
-      // 最小尺寸要先放开，否则下面的 setSize 会被夹到 760×560
-      await w.setMinSize(new mod.LogicalSize(760, 560));
-      await w.setResizable(true);
 
       // 2) 位置：回到**进入迷你前的常规位置**（记在 Rust 侧，prep 已读好）。
       //    ★ 少了这一步，"还原"出来的窗口会停在组件待过的那个角落 —— 更糟的是
@@ -238,6 +265,16 @@ export function useMiniWindow() {
         await w.setSize(new mod.PhysicalSize(target.w, target.h));
         if (pos) await w.setPosition(new mod.PhysicalPosition(pos.x, pos.y));
       }
+      // 3) ★ 常规最小尺寸放到几何动画**之后**恢复（2026-09-17 第 29 轮）：
+      //    在 264×96 的窗口上设 760×560 的最小约束，Windows 会立即按约束重排，
+      //    结果是"还原动画还没开始窗口先跳大"。等窗口真的长回常规尺寸再设，
+      //    约束只约束后续的拖拽，不影响这一次过渡。
+      //    （Rust 的 set_mini_shell 已不再包含这一项，两条路径口径一致。）
+      try {
+        await w.setMinSize(new mod.LogicalSize(760, 560));
+      } catch {
+        /* 非 Tauri 环境：忽略 */
+      }
     } catch (err) {
       console.error("退出迷你模式失败", err);
       toast.error("还原窗口失败", String(err));
@@ -251,7 +288,7 @@ export function useMiniWindow() {
   let suppressWinSave = false;
 
   /** 形态切换的内容淡出：几何动画期间两套模板都不该以"被拉伸/压扁"的
-   *  中间态示人 —— 先把当前内容淡出（0.18s），动画到位后再切模板进场。 */
+   *  中间态示人 —— 先把当前内容淡出（0.11s），动画到位后再切模板进场。 */
   const morphOut = ref(false);
   /** 几何动画进行中（第 23 轮）：App 用它在 morph 期间暂停 SmokeField ——
    *  背景烟层在 .shell 外面，内容淡出时它还在满帧重绘，是 resize 窗口
@@ -334,20 +371,30 @@ export function useMiniWindow() {
     localStorage.setItem(MINI_KEY, next ? "1" : "0");
     suppressWinSave = true;
     try {
-      // ⓪ 与淡出并行的准备工作：目标几何查询（磁盘/显示器 IO）不占动画关键路径
+      // ⓪ 与淡出并行的准备工作 —— 关键路径上只该留下"必须串行"的事：
+      //    · 目标几何查询（磁盘 / 显示器 IO）
+      //    · 迷你形态的窗口属性（4 项 IPC，实测 ~42ms）
+      //    窗口属性唯一的硬约束是"早于几何动画"（resizable / minSize 会夹住
+      //    setSize），与内容淡出毫无依赖。第 29 轮实测：它串在淡出之后会让
+      //    关键路径白多出 42ms，而并行后完全消失。
       const mod0 = await winModule();
       const w0 = mod0.getCurrentWindow();
       const prep: Promise<MiniPrep | null> =
         next ? prepMiniEnter(mod0, w0) : prepMiniExit(w0);
+      const shell: Promise<void> = applyMiniShell(next).catch(() => {});
       // ① 当前内容淡出（避免几何动画中模板被压扁的变形感）
+      //    ★ 0.11s：与 App.vue 里 `.shell` 的 morph-out 过渡时长必须一致，
+      //      否则会出现"内容还没淡完窗口就开始缩"或"淡完了窗口还不动"的空档。
+      //      人类对"点击后有反应"的感知阈值约 100ms —— 这段是纯等待，
+      //      每省 20ms 都是"跟手"的直接收益（130ms 的观感没有更从容）。
       morphOut.value = true;
       geomAnimating.value = true;
-      await new Promise((r) => setTimeout(r, 190));
+      await new Promise((r) => setTimeout(r, 110));
       mm("fade-done");
       // ② 窗口几何分帧插值到目标形态（~320ms）
       const ready = await prep;
-      if (next) await enterMiniWindow(true, ready);
-      else await exitMiniWindow(true, ready);
+      if (next) await enterMiniWindow(true, ready, shell);
+      else await exitMiniWindow(true, ready, shell);
       mm("geom-done");
       // ③ 切模板：迷你进场走 mini-in 缩放弹出，还原走常规内容 rise
       mini.value = next;

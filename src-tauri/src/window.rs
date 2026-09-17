@@ -122,18 +122,22 @@ fn position_on_screen(win: &tauri::WebviewWindow, x: i32, y: i32, w: i32, h: i32
 ///
 /// `DWMWA_WINDOW_CORNER_PREFERENCE` 是 Win11（Build 22000+）才支持的属性，
 /// 更老的系统会直接返回失败 —— 忽略即可，退回直角不影响任何功能。
+///
+/// ★ 迷你态刻意用 `DONOTROUND`，把圆角**完全交给 CSS**：
+///   DWM 只有 ROUND(≈8px) / ROUNDSMALL(≈4px) 两档，写死且不可调，
+///   而用户要的是更圆润的小组件（与悬浮信息窗同款 16px）。
+///   窗口本身 `transparent: true`，CSS `border-radius` 之外就是透明像素，
+///   所以 DONOTROUND + CSS 能做出任意半径的圆角 —— 反过来若保留 DWM 圆角，
+///   它会先把窗口裁到 8px，CSS 再圆也露不出来。
 #[cfg(windows)]
-fn apply_round_corners(win: &tauri::WebviewWindow, _small: bool) {
+fn apply_round_corners(win: &tauri::WebviewWindow, small: bool) {
     use windows_sys::Win32::Graphics::Dwm::{
-        DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+        DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWCP_ROUND,
     };
     let Ok(hwnd) = win.hwnd() else {
         return;
     };
-    // 迷你组件与常规窗口统一用标准半径（DWMWCP_ROUND ≈ 8px）——
-    // 之前小组件用 ROUNDSMALL（≈4px），在 264×96 的窗口上圆感几乎不可见，
-    // 用户明确要求迷你组件也是圆角。
-    let preference: i32 = DWMWCP_ROUND;
+    let preference: i32 = if small { DWMWCP_DONOTROUND } else { DWMWCP_ROUND };
     unsafe {
         let _ = DwmSetWindowAttribute(
             hwnd.0,
@@ -163,7 +167,8 @@ pub(crate) fn place_main_window(app: &AppHandle) {
             return;
         };
         let state = read_win_state(app);
-        apply_round_corners(&win, state.mini_mode);
+        // ★ 圆角放在几何设置**之后**（见下面 if/else 结尾）：DONOTROUND 会让窗口
+        //   立刻按矩形重算 frame，排在 set_size 之前会把尺寸设置吃掉。
 
         if state.mini_mode {
             // 迷你组件：固定客户区尺寸 + 置顶 + 贴边定位 + 关阴影（不可见 frame 黑框）
@@ -217,6 +222,9 @@ pub(crate) fn place_main_window(app: &AppHandle) {
                 let _ = win.maximize();
             }
         }
+
+        // 几何都摆好了，最后再定圆角（迷你态 DONOTROUND → 由 CSS 画 16px）。
+        apply_round_corners(&win, state.mini_mode);
 
         let _ = win.show();
         let _ = win.set_focus();
@@ -288,10 +296,26 @@ pub(crate) async fn set_mini_shell(app: AppHandle, mini: bool) -> Result<(), Str
         } else {
             win.set_always_on_top(false).map_err(|e| e.to_string())?;
             win.set_shadow(true).map_err(|e| e.to_string())?;
-            win.set_min_size(Some(tauri::LogicalSize::new(760.0, 560.0)))
-                .map_err(|e| e.to_string())?;
             win.set_resizable(true).map_err(|e| e.to_string())?;
+            // ★ 常规最小尺寸**刻意不在这里**恢复（2026-09-17 第 29 轮实测）：
+            //   执行到这一行时窗口还是 264×96，把 760×560 的最小约束加到它身上，
+            //   Windows 会按新约束立即重排 —— 表现是"还原动画还没开始，窗口先
+            //   '啪'地跳回常规大小"，320ms 的过渡动画等于被吃掉了。
+            //   前端在几何动画走完后自己补一次 setMinSize（那时窗口已是大尺寸，
+            //   约束生效无害），见 useMiniWindow.ts 的 exitMiniWindow 末尾。
+            //   —— 这也是本函数能被提前到"内容淡出期间"并行执行的前提：剩下的
+            //      三项都只影响后续行为，不会改动当前几何。
         }
+        // ★ 圆角刻意**不在这里**应用（2026-09-17 实测教训）：
+        //   迷你态要设 DWMWCP_DONOTROUND 才能把圆角让给 CSS 做 16px
+        //   （DWM 只有 ROUND≈8px / ROUNDSMALL≈4px 两档，写死不可调）。
+        //   但 DONOTROUND 会让窗口立刻按矩形重算 frame —— 紧跟其后的
+        //   animate_window_to 里的 SetWindowPos 就被丢弃，窗口纹丝不动：
+        //   实测模板已切成迷你态，窗口却仍是 1140×740，内容错乱地摊在
+        //   大窗口的左上/右上角。
+        //   正确时机是几何动画**结束之后** —— win_state_set 已经带着
+        //   mini_mode 调 apply_round_corners，而前端 toggleMini 在动画
+        //   走完后正好会触发那次写入。
         Ok(())
     }
 }
@@ -358,6 +382,9 @@ pub(crate) async fn animate_window_to(
             let t0 = Instant::now();
             // 上一帧实际应用的四元组：整像素量化后没变化就跳过事务（第 23 轮）
             let mut last_applied: Option<(i32, i32, i32, i32)> = None;
+            // 是否至少成功应用过一次几何 —— 把"SetWindowPos 全程失败"这种
+            // 静默故障变成可见错误（见下方事务块）。
+            let mut applied_any = false;
             loop {
                 let step_start = Instant::now();
                 let t = ((step_start - t0).as_secs_f64() / dur).min(1.0);
@@ -384,7 +411,11 @@ pub(crate) async fn animate_window_to(
                     (ch + dh).round() as i32,
                 );
                 if last_applied != Some(applied) || t >= 1.0 {
-                    unsafe {
+                    // ★ 检查返回值：SetWindowPos 失败是静默的，而"窗口纹丝不动"
+                    //   极难归因 —— 曾因 DONOTROUND 排在几何动画之前，每个事务
+                    //   都被 DWM 丢弃，表现为"模板切成迷你态、窗口却还是大窗"。
+                    //   一次都没成功就当失败上报，前端至少能看见。
+                    let ok = unsafe {
                         SetWindowPos(
                             hwnd,
                             std::ptr::null_mut(),
@@ -393,7 +424,10 @@ pub(crate) async fn animate_window_to(
                             applied.2,
                             applied.3,
                             SWP_NOACTIVATE | SWP_NOZORDER,
-                        );
+                        )
+                    };
+                    if ok != 0 {
+                        applied_any = true;
                     }
                     last_applied = Some(applied);
                 }
@@ -409,6 +443,9 @@ pub(crate) async fn animate_window_to(
                 unsafe {
                     let _ = DwmFlush();
                 }
+            }
+            if !applied_any {
+                return Err("SetWindowPos 全部失败：窗口几何未改变".into());
             }
             Ok(())
         })

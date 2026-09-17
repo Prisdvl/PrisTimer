@@ -940,11 +940,23 @@ onUnmounted(() => {
      点不着，因为状态栏在上层且盖住了）。留 38px 是状态栏高度 +
      一点余量，保证滚到底时最后一行内容完全露出来。 */
   padding-bottom: 38px;
-  /* 形态切换的内容淡出（morph-out）：几何动画期间模板不可见，到位后切模板 */
-  transition: opacity 0.18s ease;
+  /* 形态切换的内容淡出（morph-out）：几何动画期间模板不可见，到位后切模板。
+     ★ 0.11s：这段是"点击 → 窗口开始动"之间的纯等待，而人对"点击有反应"的
+     感知阈值约 100ms。旧值 0.18s → 0.13s → 0.11s，观感没有变从容，只有变跟手。
+     ★ 必须与 useMiniWindow.ts 里 toggleMini 的淡出等待（110ms）逐毫秒对齐，
+     否则要么"内容还在淡、窗口已经缩"，要么"淡完了一拍窗口才动"。 */
+  transition: opacity 0.11s ease;
 }
 .shell.morph-out {
   opacity: 0;
+  /* 淡出走完就彻底停止绘制（visibility 用 0s 过渡 + 0.11s 延迟实现"结束后隐藏"）。
+     几何动画期间窗口尺寸每帧在变，WebView2 要整块重采样渲染表面 ——
+     一棵 opacity:0 但仍在合成的大子树会白吃每帧预算，这正是过去形态切换
+     观感发涩的来源之一。 */
+  visibility: hidden;
+  transition:
+    opacity 0.11s ease,
+    visibility 0s linear 0.11s;
 }
 
 /* ------------------------------------------------------------- 迷你模式 */
