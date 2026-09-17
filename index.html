@@ -5,10 +5,70 @@
     <link rel="icon" type="image/png" href="/icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PrisTimer</title>
+    <style>
+      /* 启动占位样式（内联，不依赖任何外部资源）。
+         它的唯一使命：在 JS bundle 加载/执行之前，窗口里就已经有内容 ——
+         背景与应用一致（深色 + 圆角），绝不出现浏览器那种刺眼的白屏。
+
+         ★★ 重要教训：这里的规则**绝不能**写成作用到 html/body 的全局样式。
+         曾经在这里写过 `html, body { overflow: hidden }` 来防止占位溢出 ——
+         #boot 在 Vue 挂载后会被删掉，但 `<style>` 块会留在文档里，
+         `overflow: hidden` 于是**永久禁用整个页面的滚动**，统计页
+         滚不动、下面内容看不见。占位样式必须全部挂在 #boot 自己的
+         选择器下，挂载后随 #boot 一起消失。 */
+      html {
+        margin: 0;
+        height: 100%;
+      }
+      body {
+        margin: 0;
+      }
+      #boot {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        gap: 0.9rem;
+        align-content: center;
+        /* 背景画在占位元素自己身上，而不是全局 html/body 上 */
+        background: radial-gradient(120% 90% at 50% 0%, #12161d 0%, #0a0c10 55%, #07080b 100%);
+        color: #8b93a3;
+        font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+        user-select: none;
+      }
+      #boot .ring {
+        width: 34px;
+        height: 34px;
+        border: 2px solid rgb(255 255 255 / 0.1);
+        border-top-color: #3ecf8e;
+        border-radius: 50%;
+        animation: spin 0.9s linear infinite;
+      }
+      #boot p {
+        margin: 0;
+        font-size: 0.78rem;
+        letter-spacing: 0.08em;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+    </style>
   </head>
 
   <body>
     <div id="app"></div>
+
+    <!-- 启动占位：Vue 挂载成功后由 main.ts 摘掉。
+         万一前端资源加载失败（打包异常 / devUrl 没起服务），用户看到的是
+         这行明确的提示，而不是 WebView2 内置的 Edge 风格错误页 ——
+         后者不仅难看，还会直接暴露"这是个网页"。 -->
+    <div id="boot">
+      <div class="ring"></div>
+      <p id="boot-text">正在启动 PrisTimer…</p>
+    </div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

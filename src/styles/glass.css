@@ -659,6 +659,37 @@ body {
   display: none;
 }
 
+/* ------------------------------------------------- 去浏览器化：文本选择 */
+/* ★ 拖选文字是最直观的"这是个网页"信号：真实的桌面应用里，除了输入框，
+   没有任何地方是可以拖出一片蓝色选区的。
+   html 上已经没开 user-select: none 的兜底，这里再补一条全局的 —— 因为
+   部分元素的默认 user-select 会被后续规则（比如 button/input）改回来。
+   输入框与可编辑区域必须**保持可选**，否则用户没法复制粘贴 API Key。 */
+body {
+  user-select: none;
+  -webkit-user-select: none;
+}
+input,
+textarea,
+[contenteditable="true"],
+.selectable {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* 拖动图片的残留拖影（WebView2 会把 <img> 变成可拖拽对象，
+   拖出去就是一个"另存为/打开"的浏览器行为） */
+img {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+/* 双击选中整块文本同样是网页行为；桌面应用里双击通常是"重命名/激活"。 */
+button,
+.no-dblclick-select {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 /* ------------------------------------------------------- 共享过渡片段 */
 /* 面板/卡片的通用入场：上浮 + 淡入 + 轻微缩放。配合 --delay 做错峰。 */
 @keyframes rise-in {

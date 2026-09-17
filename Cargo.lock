@@ -2748,6 +2748,8 @@ dependencies = [
  "tauri-plugin-autostart",
  "tauri-plugin-notification",
  "tauri-plugin-opener",
+ "webview2-com",
+ "windows",
  "windows-sys 0.61.2",
 ]
 

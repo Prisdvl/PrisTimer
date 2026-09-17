@@ -2,10 +2,11 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the main window",
-  "windows": ["main"],
+  "windows": ["main", "overlay"],
   "permissions": [
     "core:default",
     "opener:default",
+    "core:event:default",
     "core:window:allow-minimize",
     "core:window:allow-unminimize",
     "core:window:allow-toggle-maximize",
@@ -25,6 +26,7 @@
     "core:window:allow-inner-size",
     "core:window:allow-outer-size",
     "core:window:allow-outer-position",
-    "core:window:allow-available-monitors"
+    "core:window:allow-available-monitors",
+    "core:window:allow-primary-monitor"
   ]
 }

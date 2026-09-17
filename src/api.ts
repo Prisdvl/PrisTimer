@@ -207,3 +207,121 @@ export const windowApi = {
    *  四项设置（逐项 IPC 实测 ~21ms/次，串行 4 次在动画关键路径上白占 ~80ms）。 */
   setMiniShell: (mini: boolean) => invoke<null>("set_mini_shell", { mini }),
 };
+
+// ---------------------------------------------------------------------------
+// 系统信息（蓝牙设备 + opencode-go 额度）
+//
+// ★ 与 Rust 侧 insight::* 一一对应。新增字段时两端必须同步 ——
+//   这是「跨语言边界共享数据结构」的固定成本，只能靠约定。
+// ---------------------------------------------------------------------------
+
+/** 蓝牙设备类型。与 Rust 侧 `DeviceKind` 的序列化值对齐。 */
+export type BtKind = "classic" | "ble" | "dual";
+
+/** 电量来源。与 Rust 侧 `BatterySource` 对齐。 */
+export type BatterySource = "bleBas" | "classicSdp" | "systemPnp" | "none";
+
+/** 一台已连接的蓝牙设备。字段名 = Rust 侧 `#[serde(rename_all = "camelCase")]` 的输出。 */
+export interface BtDevice {
+  /** 稳定唯一标识（v-for 的 key；**不是**设备名）。 */
+  id: string;
+  name: string;
+  kind: BtKind;
+  /** 0–100；读不到为 null（需求强制：未知 ≠ 0）。 */
+  batteryPercent: number | null;
+  batterySource: BatterySource;
+  isAudio: boolean;
+}
+
+/** 蓝牙子系统的整体状态（三态分离，界面按它给不同提示）。 */
+export type BtStatus =
+  | { status: "ok"; devices: BtDevice[] }
+  | { status: "poweredOff" }
+  | { status: "noAdapter" }
+  | { status: "error"; message: string };
+
+/** 订阅额度的单个配额窗口。与 Rust 侧 `QuotaWindow` 对齐。
+ *
+ *  ★ opencode Go 的用量接口返回三个独立重置的窗口（滚动 5h / 本周 / 本月），
+ *    每个窗口各自有剩余百分比与重置时刻 —— 只看单一总额会丢掉
+ *    "哪个窗口先耗尽、什么时候恢复"这个关键信息。
+ */
+export interface QuotaWindow {
+  /** 窗口标签（"滚动" / "本周" / "本月"），由后端定好。 */
+  label: string;
+  /** **剩余**百分比 0–100（接口给的是已用，后端已换算）。 */
+  remainingPercent: number;
+  /** 该窗口的重置时刻（原样字符串）。 */
+  resetsAt: string | null;
+  /** 接口给的窗口状态（"ok" / 超额提示等）。 */
+  status: string | null;
+}
+
+/** opencode-go 额度状态。 */
+export type QuotaStatus =
+  | {
+      status: "ok";
+      remaining: number;
+      total: number | null;
+      used: number | null;
+      unit: string;
+      resetsAt: string | null;
+      raw: string;
+      /** 多窗口接口（opencode Go）才有；旧接口为空数组。 */
+      windows: QuotaWindow[];
+    }
+  | { status: "notConfigured" }
+  | { status: "unauthorized"; message: string }
+  | { status: "network"; message: string }
+  | { status: "apiError"; message: string };
+
+/** 一次性快照。时间戳用 Unix 毫秒（与 `Date.now()` 同坐标系）。 */
+export interface InsightSnapshot {
+  bluetooth: BtStatus;
+  bluetoothAtMs: number;
+  quota: QuotaStatus;
+  quotaAtMs: number;
+}
+
+/** `bt_refresh` 的返回值。 */
+export interface RefreshOutcome {
+  throttled: boolean;
+  bluetooth: BtStatus;
+}
+
+/** 额度配置的展示视图（Key 打码）。 */
+export interface QuotaConfigView {
+  hasKey: boolean;
+  keyHint: string;
+  /** 实际使用的接口地址（用户留空时为内置默认端点）。 */
+  endpoint: string;
+  /** 该地址是否来自内置默认值。 */
+  endpointIsDefault: boolean;
+}
+
+export const insightApi = {
+  /** 读当前快照（纯读缓存，不触发扫描）。挂载时调用一次。 */
+  current: () => invoke<InsightSnapshot>("insight_current"),
+
+  /** 查蓝牙设备。受 Rust 侧 10 秒节流闸门约束，被节流时返回缓存值。 */
+  btDevices: () => invoke<BtStatus>("bt_devices"),
+
+  /** 用户显式刷新蓝牙；`throttled` 告诉前端"刚刚才扫过"。 */
+  btRefresh: () => invoke<RefreshOutcome>("bt_refresh"),
+
+  /** 查询额度（真发 HTTP）。 */
+  quotaQuery: () => invoke<QuotaStatus>("quota_query"),
+
+  /** 读额度配置（Key 打码）。 */
+  quotaConfigGet: () => invoke<QuotaConfigView>("quota_config_get"),
+
+  /** 写额度配置并立刻查询一次，返回值即最新额度状态。 */
+  quotaConfigSet: (patch: { apiKey?: string | null; endpoint?: string | null }) =>
+    invoke<QuotaStatus>("quota_config_set", {
+      apiKey: patch.apiKey ?? null,
+      endpoint: patch.endpoint ?? null,
+    }),
+
+  /** 开关托盘旁的悬浮信息窗（overlay 窗口）。 */
+  overlayToggle: (visible: boolean) => invoke<boolean>("overlay_toggle", { visible }),
+};

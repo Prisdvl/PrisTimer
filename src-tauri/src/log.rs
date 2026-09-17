@@ -21,6 +21,17 @@ const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
 
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
+/// 写入互斥。
+///
+/// ★ 为什么必须有（实测缺陷）：日志是被**多线程**调用的 —— 计时线程、
+///   两个 tokio 刷新任务、命令处理线程都会写。`OpenOptions::append`
+///   到同一个文件在多线程下**不是原子**的：实测日志里出现过
+///   `[[2026-09-17 03:00:45 UTC2026-09-17 03:00:45 UTC] 电量索引…`
+///   这种两条记录互相穿插的损坏行。日志是排障时唯一的现场，
+///   它自己被写坏就等于丢掉现场。加一把锁串行化，代价可忽略
+///   （每行一次 open/write/close，微秒级）。
+static LOG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// 初始化。必须在任何 `log` 调用之前执行（`setup()` 的第一件事）。
 pub fn init(dir: &Path) {
     let _ = std::fs::create_dir_all(dir);
@@ -44,6 +55,11 @@ pub fn log(msg: impl AsRef<str>) {
     let Some(path) = LOG_PATH.get() else {
         return;
     };
+    // 持锁覆盖「判大小 + 写」整段：两个线程同时判定超限时，
+    // 也不会有第二个把刚写好的新文件再删一次。
+    let _guard = LOG_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if std::fs::metadata(path).map(|m| m.len()).unwrap_or(0) > MAX_LOG_BYTES {
         let _ = std::fs::remove_file(path);
     }

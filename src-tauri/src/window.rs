@@ -10,8 +10,12 @@ use tauri::{AppHandle, Manager};
 pub(crate) fn show_main_window(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.show();
-        let _ = win.unminimize();
-        let _ = win.set_focus();
+        // unminimize / set_focus 是桌面窗口概念，移动端没有对应 API。
+        #[cfg(desktop)]
+        {
+            let _ = win.unminimize();
+            let _ = win.set_focus();
+        }
     }
 }
 
@@ -147,68 +151,76 @@ fn apply_round_corners(_win: &tauri::WebviewWindow, _small: bool) {}
 ///
 /// 必须在窗口被用户看见之前调用，且这是**唯一**的启动期几何来源 ——
 /// 前端不再参与恢复，也就没有「先默认位置、再跳过去」这一出。
+/// 移动端没有桌面窗口几何（Activity 由系统全屏管理），整体编译期剔除。
 pub(crate) fn place_main_window(app: &AppHandle) {
-    let Some(win) = app.get_webview_window("main") else {
-        return;
-    };
-    let state = read_win_state(app);
-    apply_round_corners(&win, state.mini_mode);
-
-    if state.mini_mode {
-        // 迷你组件：固定客户区尺寸 + 置顶 + 贴边定位 + 关阴影（不可见 frame 黑框）
-        let scale = win.scale_factor().unwrap_or(1.0);
-        let _ = win.set_shadow(false);
-        let pw = (MINI_W * scale).round() as u32;
-        let ph = (MINI_H * scale).round() as u32;
-        let _ = win.set_resizable(false);
-        let _ = win.set_min_size(None::<tauri::LogicalSize<f64>>);
-        let _ = win.set_size(tauri::PhysicalSize::new(pw, ph));
-        let _ = win.set_always_on_top(true);
-
-        // 位置是外框左上角，贴边就得用外框尺寸 —— 拿客户区宽度去算，
-        // 组件右边缘会探出屏幕（264 + 14 的边距配 280 的外框，正好越界 2px）。
-        let (ow, oh) = win
-            .outer_size()
-            .map(|s| (s.width as i32, s.height as i32))
-            .unwrap_or((pw as i32, ph as i32));
-        let placed = state
-            .mini
-            .filter(|m| position_on_screen(&win, m.x, m.y, ow, oh))
-            .map(|m| {
-                let _ = win.set_position(tauri::PhysicalPosition::new(m.x, m.y));
-            })
-            .is_some();
-        if !placed {
-            if let Ok(Some(monitor)) = win.current_monitor() {
-                let margin = (14.0 * scale).round() as i32;
-                let mpos = monitor.position();
-                let msize = monitor.size();
-                let _ = win.set_position(tauri::PhysicalPosition::new(
-                    mpos.x + msize.width as i32 - ow - margin,
-                    mpos.y + msize.height as i32 - oh - margin,
-                ));
-            }
-        }
-    } else {
-        let _ = win.set_shadow(true);
-        let _ = win.set_resizable(true);
-        let _ = win.set_min_size(Some(tauri::LogicalSize::new(MIN_W, MIN_H)));
-        if let Some(n) = state.normal {
-            if n.w >= 400.0
-                && n.h >= 300.0
-                && position_on_screen(&win, n.x, n.y, n.w as i32, n.h as i32)
-            {
-                let _ = win.set_size(tauri::PhysicalSize::new(n.w as u32, n.h as u32));
-                let _ = win.set_position(tauri::PhysicalPosition::new(n.x, n.y));
-            }
-        }
-        if state.maximized {
-            let _ = win.maximize();
-        }
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
     }
+    #[cfg(desktop)]
+    {
+        let Some(win) = app.get_webview_window("main") else {
+            return;
+        };
+        let state = read_win_state(app);
+        apply_round_corners(&win, state.mini_mode);
 
-    let _ = win.show();
-    let _ = win.set_focus();
+        if state.mini_mode {
+            // 迷你组件：固定客户区尺寸 + 置顶 + 贴边定位 + 关阴影（不可见 frame 黑框）
+            let scale = win.scale_factor().unwrap_or(1.0);
+            let _ = win.set_shadow(false);
+            let pw = (MINI_W * scale).round() as u32;
+            let ph = (MINI_H * scale).round() as u32;
+            let _ = win.set_resizable(false);
+            let _ = win.set_min_size(None::<tauri::LogicalSize<f64>>);
+            let _ = win.set_size(tauri::PhysicalSize::new(pw, ph));
+            let _ = win.set_always_on_top(true);
+
+            // 位置是外框左上角，贴边就得用外框尺寸 —— 拿客户区宽度去算，
+            // 组件右边缘会探出屏幕（264 + 14 的边距配 280 的外框，正好越界 2px）。
+            let (ow, oh) = win
+                .outer_size()
+                .map(|s| (s.width as i32, s.height as i32))
+                .unwrap_or((pw as i32, ph as i32));
+            let placed = state
+                .mini
+                .filter(|m| position_on_screen(&win, m.x, m.y, ow, oh))
+                .map(|m| {
+                    let _ = win.set_position(tauri::PhysicalPosition::new(m.x, m.y));
+                })
+                .is_some();
+            if !placed {
+                if let Ok(Some(monitor)) = win.current_monitor() {
+                    let margin = (14.0 * scale).round() as i32;
+                    let mpos = monitor.position();
+                    let msize = monitor.size();
+                    let _ = win.set_position(tauri::PhysicalPosition::new(
+                        mpos.x + msize.width as i32 - ow - margin,
+                        mpos.y + msize.height as i32 - oh - margin,
+                    ));
+                }
+            }
+        } else {
+            let _ = win.set_shadow(true);
+            let _ = win.set_resizable(true);
+            let _ = win.set_min_size(Some(tauri::LogicalSize::new(MIN_W, MIN_H)));
+            if let Some(n) = state.normal {
+                if n.w >= 400.0
+                    && n.h >= 300.0
+                    && position_on_screen(&win, n.x, n.y, n.w as i32, n.h as i32)
+                {
+                    let _ = win.set_size(tauri::PhysicalSize::new(n.w as u32, n.h as u32));
+                    let _ = win.set_position(tauri::PhysicalPosition::new(n.x, n.y));
+                }
+            }
+            if state.maximized {
+                let _ = win.maximize();
+            }
+        }
+
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
 }
 
 /// 合并式写入窗口状态：只更新传进来的字段，其余保留。
@@ -256,23 +268,32 @@ pub(crate) fn win_state_get(app: AppHandle) -> WinStateFile {
 /// 每次实测 ~21ms，4 次串行在动画关键路径上白占 ~80ms（内容已淡出、窗口干等）。
 #[tauri::command]
 pub(crate) async fn set_mini_shell(app: AppHandle, mini: bool) -> Result<(), String> {
-    use tauri::Manager;
-    let win = app.get_webview_window("main").ok_or("主窗口不存在")?;
-    if mini {
-        win.set_resizable(false).map_err(|e| e.to_string())?;
-        win.set_min_size::<tauri::LogicalSize<f64>>(None)
-            .map_err(|e| e.to_string())?;
-        win.set_always_on_top(true).map_err(|e| e.to_string())?;
-        // ★ 迷你态关 DWM 阴影：shadow=true 的不可见 resize frame 是"黑框"来源
-        win.set_shadow(false).map_err(|e| e.to_string())?;
-    } else {
-        win.set_always_on_top(false).map_err(|e| e.to_string())?;
-        win.set_shadow(true).map_err(|e| e.to_string())?;
-        win.set_min_size(Some(tauri::LogicalSize::new(760.0, 560.0)))
-            .map_err(|e| e.to_string())?;
-        win.set_resizable(true).map_err(|e| e.to_string())?;
+    // 迷你形态是桌面概念（置顶小窗），移动端直接无操作。
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, mini);
+        return Ok(());
     }
-    Ok(())
+    #[cfg(desktop)]
+    {
+        use tauri::Manager;
+        let win = app.get_webview_window("main").ok_or("主窗口不存在")?;
+        if mini {
+            win.set_resizable(false).map_err(|e| e.to_string())?;
+            win.set_min_size::<tauri::LogicalSize<f64>>(None)
+                .map_err(|e| e.to_string())?;
+            win.set_always_on_top(true).map_err(|e| e.to_string())?;
+            // ★ 迷你态关 DWM 阴影：shadow=true 的不可见 resize frame 是"黑框"来源
+            win.set_shadow(false).map_err(|e| e.to_string())?;
+        } else {
+            win.set_always_on_top(false).map_err(|e| e.to_string())?;
+            win.set_shadow(true).map_err(|e| e.to_string())?;
+            win.set_min_size(Some(tauri::LogicalSize::new(760.0, 560.0)))
+                .map_err(|e| e.to_string())?;
+            win.set_resizable(true).map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
 }
 
 /// 原生窗口几何动画：把"迷你↔常规"的过渡从 JS rAF 挪到 Rust 侧分帧执行。
@@ -394,7 +415,7 @@ pub(crate) async fn animate_window_to(
         .await
         .map_err(|e| e.to_string())?
     }
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), desktop))]
     {
         let _ = (x, y, w, h);
         use tauri::Manager;
@@ -406,6 +427,11 @@ pub(crate) async fn animate_window_to(
         win.set_position(tauri::PhysicalPosition::new(x, y))
             .map_err(|e| e.to_string())?;
         let _ = duration_ms;
+        Ok(())
+    }
+    #[cfg(not(desktop))]
+    {
+        let _ = (app, x, y, w, h, duration_ms);
         Ok(())
     }
 }

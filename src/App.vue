@@ -15,6 +15,7 @@ import ParticleField from "./components/ParticleField.vue";
 import PomodoroPanel from "./components/PomodoroPanel.vue";
 import SmokeField from "./components/SmokeField.vue";
 import StatsView from "./components/StatsView.vue";
+import StatusBar from "./components/StatusBar.vue";
 import TagRow from "./components/TagRow.vue";
 import ThemeMenu from "./components/ThemeMenu.vue";
 import TitleBar from "./components/TitleBar.vue";
@@ -102,8 +103,37 @@ const { pomodoro, pomoConfig, pomoSettingsOpen, syncDraft, togglePomodoro, phase
 // 刻意**不做**系统级全局热键：空格若被注册成全局热键，会劫持所有其他
 // 应用里的打字与刷题。窗口聚焦时的空格语义与主按钮完全一致
 // （running → 暂停，其余 → 开始），输入框聚焦时自动让路。
+//
+// ★ 「去浏览器化」第二层防线。
+//
+//   第一层在 Rust 侧：`shell.rs` 通过 WebView2 原生设置关掉了浏览器
+//   专属加速键（F5 / Ctrl+R / F12 / Ctrl+P / Ctrl+F / 缩放 / 前进后退），
+//   那些按键在**到达 JS 之前**就被 WebView2 吞掉了，这里拦不到也不需要拦。
+//
+//   这一层只兜两条边：
+//     · WebView2 运行时过老、原生设置没生效时（Rust 侧会记日志），
+//       F5 / F11 / F12 等仍可能到达页面 —— 在这里补 preventDefault；
+//     · 原生设置清单里**不包含**的浏览器行为（F11 全屏等）。
 // ---------------------------------------------------------------------------
 function onKeydown(e: KeyboardEvent): void {
+  // ---- 浏览器独有快捷键：一律吞掉 ----
+  // 注意：在 processor 里，`e.key` 需要从 `e.key` 读（KeyboardEvent），
+  // 不能依赖 deprecated 的 `keyCode`。
+  const browserKey =
+    e.key === "F5" ||
+    e.key === "F11" ||
+    e.key === "F12" ||
+    (e.ctrlKey && e.key.toLowerCase() === "r") || // Ctrl+R 刷新
+    (e.ctrlKey && e.key.toLowerCase() === "p") || // Ctrl+P 打印
+    (e.ctrlKey && e.key.toLowerCase() === "f") || // Ctrl+F 查找
+    (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "i") || // Ctrl+Shift+I 检查
+    (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "c"); // Ctrl+Shift+C 检查元素
+  if (browserKey) {
+    e.preventDefault();
+    e.stopPropagation();
+    return;
+  }
+
   if (e.ctrlKey || e.altKey || e.metaKey) return;
   const target = e.target as HTMLElement | null;
   if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
@@ -483,6 +513,8 @@ let unlistenPomodoro: UnlistenFn | null = null;
 onMounted(async () => {
   document.addEventListener("keydown", onKeydown);
   document.addEventListener("contextmenu", onContextmenu);
+  document.addEventListener("dragover", onGlobalDragOver);
+  document.addEventListener("drop", onGlobalDrop);
   // 窗口几何已由 Rust 在 show 之前摆好（见 lib.rs 的 place_main_window），
   // 前端不再参与启动期恢复 —— 这里只补运行时约束。
   syncMiniClass();
@@ -564,9 +596,25 @@ function onContextmenu(e: MouseEvent): void {
   e.preventDefault();
 }
 
+// ---------------------------------------------------------------------------
+// 全局拖放守卫：窗口已开启原生 DnD 通路（tauri.conf 的 dragDropEnabled=false，
+// 番茄序列卡片的 HTML5 拖拽才能工作），但应用并不接收外部文件 ——
+// 拦掉 dragover/drop 的浏览器默认行为（拖文件进窗口默认 = 跳转到该文件），
+// 窗口对文件的拖放回到"什么都不发生"。卡片间的拖拽有各自的 drop 处理器：
+// 这里只是补一层 preventDefault，不参与任何排序逻辑。
+// ---------------------------------------------------------------------------
+function onGlobalDragOver(e: DragEvent): void {
+  e.preventDefault();
+}
+function onGlobalDrop(e: DragEvent): void {
+  e.preventDefault();
+}
+
 onUnmounted(() => {
   document.removeEventListener("keydown", onKeydown);
   document.removeEventListener("contextmenu", onContextmenu);
+  document.removeEventListener("dragover", onGlobalDragOver);
+  document.removeEventListener("drop", onGlobalDrop);
   unlisten?.();
   unlistenPomodoro?.();
   clearTimeout(appliedTimer);
@@ -840,6 +888,10 @@ onUnmounted(() => {
           <span class="ui-fab-icon" aria-hidden="true" />
         </button>
       </div>
+
+      <!-- 底部系统信息状态栏：蓝牙设备 + opencode-go 额度。
+           常规形态且非沉浸时显示（迷你组件有自己的紧凑布局，不塞这条）。 -->
+      <StatusBar v-if="!mini && !immersive" />
     </div>
   </div>
 </template>
@@ -882,6 +934,12 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  /* ★ 底部为固定的信息状态栏（实测约 28–30px）留出滚动空间。
+     状态栏是 `position: fixed` —— 它不参与文档流，不给这里留白的话
+     页面最底部的「使用提示 / 统计页末块」会被压在它下面（看得见但
+     点不着，因为状态栏在上层且盖住了）。留 38px 是状态栏高度 +
+     一点余量，保证滚到底时最后一行内容完全露出来。 */
+  padding-bottom: 38px;
   /* 形态切换的内容淡出（morph-out）：几何动画期间模板不可见，到位后切模板 */
   transition: opacity 0.18s ease;
 }
@@ -1068,8 +1126,9 @@ onUnmounted(() => {
   gap: 1.4rem;
   /* 表盘尺寸随窗口高度伸缩：350px 是除表盘外全部纵向 chrome 的实测值
      （标题栏 38 + stage 内边距 + tabs + 三行控件 + 提示 Tabs）。
-     最小高度 560 的窗口仍能拿到 230px 的保底表盘，底部时长档不被裁切。 */
-  --dial-size: clamp(230px, calc(100vh - 350px), 330px);
+     最小高度 560 的窗口仍能拿到 230px 的保底表盘，底部时长档不被裁切。
+     第 24 轮：+26 —— 底部信息状态栏占掉的高度。 */
+  --dial-size: clamp(230px, calc(100vh - 376px), 330px);
 }
 
 .readout {

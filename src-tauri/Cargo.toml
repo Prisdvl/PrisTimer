@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "custom-protocol"] }
 tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
@@ -44,7 +44,47 @@ tauri-plugin-autostart = "2"
 #                                      （不加就会看到「no CreateMutexW in Threading」）
 #   Win32_UI_WindowsAndMessaging    —— FindWindowW / SetForegroundWindow / MessageBoxW
 #   Win32_Foundation                —— GetLastError / ERROR_ALREADY_EXISTS
+#
+# ★ 下面第二个依赖块（`windows`，不是 `windows-sys`）是「系统信息」子系统专用的：
+#   tauri 2.x 自己就依赖 windows 0.61，所以这里启用 feature 不引入任何新的
+#   下载项 —— 对离线构建环境是决定性的（reqwest + rustls + aws-lc-rs 那条链
+#   本地根本装不上）。feature 逐条对应用途：
+#
+#   Devices_Bluetooth                        —— BluetoothDevice / BluetoothLEDevice
+#   Devices_Bluetooth_GenericAttributeProfile —— GATT 服务/特征（BLE 电量 BAS）
+#   Devices_Enumeration                      —— DeviceInformation 设备枚举与 PnP 属性
+#   Devices_Radios                           —— 蓝牙无线电开关状态（"蓝牙关了"这个态）
+#   Foundation_Collections                   —— IVectorView（枚举返回的集合类型）
+#   Storage_Streams                          —— DataReader（读 GATT 返回值）
+#   Win32_Networking_WinHttp                 —— HTTPS 查询额度（复用系统 TLS，零新增依赖）
+#   Win32_System_WinRT                       —— RoInitialize / RoUninitialize
+#   Win32_System_Com                         —— WinRT 的 COM 基座（HRESULT / IUnknown 相关）
+#   Win32_System_Registry                    —— 经典蓝牙设备的系统元数据（BTHPORT 注册表）
 [target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Devices_Bluetooth",
+    "Devices_Bluetooth_GenericAttributeProfile",
+    "Devices_Enumeration",
+    "Devices_Radios",
+    "Foundation_Collections",
+    "Storage_Streams",
+    "Win32_Networking_WinHttp",
+    "Win32_System_WinRT",
+    "Win32_System_Com",
+    "Win32_System_Registry",
+] }
+# ★ 桌面外壳「去浏览器化」专用。
+#
+# Tauri 自己就用 webview2-com 0.38（见 tauri 的 Cargo.toml），所以这里
+# 加它不引入新版本、不新增下载项 —— 只是让我们能直接摸到 WebView2 的
+# ICoreWebView2Settings3/4/5，把「像一个浏览器」的那些行为关掉。
+#
+# 为什么必须绕到这一层：Tauri 的 WebviewWindowBuilder 只暴露了
+# `additional_browser_args`（Chromium 命令行开关），**没有**暴露
+# WebView2 的 Settings 接口。而 F5 / Ctrl+R / Ctrl+P / Ctrl+F / F12
+# 这类浏览器专属加速键只能由 `AreBrowserAcceleratorKeysEnabled`
+# 关掉 —— 命令行开关管不到它们。
+webview2-com = "0.38"
 windows-sys = { version = "0.61", features = [
     "Win32_Graphics_Dwm",
     "Win32_Foundation",

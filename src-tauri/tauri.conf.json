@@ -18,12 +18,29 @@
         "decorations": false,
         "shadow": true,
         "center": true,
+        "visible": false,
+        "dragDropEnabled": false
+      },
+      {
+        "label": "overlay",
+        "title": "PrisTimer 状态",
+        "url": "index.html#overlay",
+        "width": 300,
+        "height": 186,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
         "visible": false
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "trayIcon": null
   },
   "bundle": {
     "active": true,

@@ -33,3 +33,9 @@ target/
 # Mobile icon sets (desktop-only app)
 src-tauri/icons/android/
 src-tauri/icons/ios/
+
+# Android 脚手架（src-tauri/gen/android）随源码入库 —— gradle 脚本、Manifest、
+# MainActivity 这些手改后会被 `tauri android init` 覆盖，必须进版本库；目录内
+# 自带的 .gitignore 已经排掉了 .gradle/ 与 build/。
+# capability 的 JSON schema 由 tauri 构建期生成，仅供编辑器补全，不入库。
+src-tauri/gen/schemas/

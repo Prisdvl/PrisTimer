@@ -2,10 +2,6 @@ use std::sync::{Arc, Mutex};
 
 use pristimer_core::{Command, Phase, PomodoroConfig, SystemClock, TimerRuntime, TimerSnapshot, TimerState};
 use pristimer_store::Store;
-#[cfg(desktop)]
-use tauri::menu::{CheckMenuItem, Menu, MenuItem};
-#[cfg(desktop)]
-use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager};
 #[cfg(desktop)]
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
@@ -13,17 +9,20 @@ use tauri_plugin_notification::NotificationExt;
 
 mod backup;
 mod commands;
+mod insight;
 pub mod log;
 mod pomodoro;
 mod recorder;
+mod shell;
 mod state;
+mod tray;
 mod window;
 
 use pomodoro::PomodoroManager;
 use recorder::Recorder;
 use state::{lock, AppTimer, CommandCell, SharedPomodoro, SharedRecorder, SnapshotCache};
 use commands::pomodoro::pomodoro_notice;
-use window::{place_main_window, show_main_window};
+use window::place_main_window;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -371,10 +370,73 @@ fn build_app() -> tauri::Builder<tauri::Wry> {
             //    （托盘、菜单、系统集成）出问题都不会让它变成"启动了却没有窗口"。
             place_main_window(app.handle());
 
-            // 6. 托盘（仅桌面）：左键单击恢复窗口，右键菜单（显示 / 开机自启 / 退出）。
-            //    移动端没有托盘与"开机自启"概念，整块编译期剔除。
+            // 5.5 桌面外壳「去浏览器化」：关掉 WebView2 的浏览器加速键
+            //     （F5 / F12 / Ctrl+P / Ctrl+F / 缩放 / 前进后退）与右键菜单。
+            //     ★ 必须在窗口 show 之后才做 —— CoreWebView2 在那时才就绪。
+            //       harden_with_retry 会立刻试一次并延迟重试（见 shell.rs）。
+            //
+            //     5.6 同时挂一个「devUrl 不可达就回退内置资源」的保险：
+            //     debug 构建默认加载 devUrl，用户双击时若 Vite 没在跑，
+            //     就会看到"localhost 拒绝连接"。回退后 debug 也能独立运行。
             #[cfg(desktop)]
-            setup_tray(app.handle())?;
+            {
+                shell::harden_with_retry(app.handle().clone(), "main");
+                shell::harden_with_retry(app.handle().clone(), "overlay");
+                ensure_frontend_reachable(app.handle());
+            }
+
+            // 6. 系统信息（蓝牙 + opencode-go 额度）状态存储与后台刷新。
+            //    必须先 manage 再 spawn：刷新任务与命令都要从 state 读共享数据，
+            //    而 `setup` 返回后 Tauri 才会验收 `manage` 的注册。
+            let insight = insight::InsightState::new();
+
+            // 6.1 载入持久化的额度配置（API Key / 接口地址）。
+            //
+            // ★ 这一步不能省：配置存在 settings 表里，不载入的话用户
+            //   重启应用后又变回「未配置」，而他明明填过 —— 这种"填了没用"
+            //   的体验会让人以为功能坏了。坏数据（手改坏了 JSON）按未配置
+            //   处理，与项目里 `pomodoro_config` 的容错口径一致。
+            {
+                let saved = recorder.lock().ok().and_then(|guard| {
+                    guard
+                        .store()
+                        .get_setting(insight::quota::SETTINGS_KEY)
+                        .ok()
+                        .flatten()
+                });
+                if let Some(raw) = saved {
+                    match serde_json::from_str::<insight::quota::QuotaConfig>(&raw) {
+                        Ok(config) => {
+                            log::log(format!(
+                                "载入额度配置：地址={} Key={}",
+                                if config.endpoint.is_empty() { "(空)" } else { &config.endpoint },
+                                if config.api_key.is_empty() { "(未设置)" } else { "(已设置)" }
+                            ));
+                            insight.set_quota_config(config);
+                        }
+                        Err(err) => log::log(format!("额度配置损坏，按未配置处理: {err}")),
+                    }
+                }
+            }
+
+            app.manage(insight.clone());
+            // 托盘（仅桌面）与刷新任务都需要 app handle 与最新快照。
+            #[cfg(desktop)]
+            {
+                // 7. 托盘（仅桌面）：左键单击恢复窗口，右键菜单（蓝牙/额度信息 + 显示 / 开机自启 / 退出）。
+                //    首帧快照 —— 托盘不至于还没数据就显示成空白。
+                tray::build_tray(app.handle(), &insight.snapshot())?;
+                // 8. 后台定时刷新（蓝牙 30s / 额度 5min），tokio 任务里跑。
+                //    注意必须在托盘建好之后 spawn —— 刷新回调要调 `tray::sync_tray`。
+                insight::commands::spawn_refresh_tasks(app.handle().clone(), insight);
+            }
+            #[cfg(not(desktop))]
+            {
+                // 移动端没有托盘也没有系统信息栏 —— 这里只保留状态对象，
+                // 刷新任务整套不参与编译（insight 的 device/quota 都只在
+                // 桌面平台有实现，移动端 spawn 也没意义）。
+                let _ = (&insight,);
+            }
 
             Ok(())
         })
@@ -404,68 +466,89 @@ fn build_app() -> tauri::Builder<tauri::Wry> {
             window::win_state_get,
             window::win_state_save,
             window::set_mini_shell,
-            window::animate_window_to
+            window::animate_window_to,
+            // ---- 系统信息（蓝牙 + opencode-go 额度）----
+            insight::commands::insight_current,
+            insight::commands::bt_devices,
+            insight::commands::bt_refresh,
+            insight::commands::quota_query,
+            insight::commands::quota_config_get,
+            insight::commands::quota_config_set,
+            insight::commands::overlay_toggle
         ])
 }
 
-/// 托盘装配（仅桌面编译）：菜单三项 + 图标 + 左键单击弹回。
-/// 移动端无托盘概念，本函数整体不参与编译。
-#[cfg(desktop)]
-fn setup_tray(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
-    let autostart_item = CheckMenuItem::with_id(
-        app,
-        "autostart",
-        "开机自启",
-        true,
-        app.autolaunch().is_enabled().unwrap_or(false),
-        None::<&str>,
-    )?;
-    let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_item, &autostart_item, &quit_item])?;
-    let autostart_for_menu = autostart_item.clone();
-    // 图标缺失（打包异常、精简过的资源）不该让托盘构建失败并把整个
-    // 启动链带下去 —— 没有图标的托盘总比没有托盘强，日志里留一句就够了。
-    let mut tray = TrayIconBuilder::with_id("main")
-        .tooltip("PrisTimer")
-        .menu(&menu)
-        .show_menu_on_left_click(false);
-    match app.default_window_icon() {
-        Some(icon) => tray = tray.icon(icon.clone()),
-        None => log::log("托盘图标缺失，使用无图标托盘"),
+/// 开机自启当前是否开启（托盘「开机自启」勾选项的初始值）。
+///
+/// 自启插件在极少数环境（注册表被策略锁死）下会返回 Err，
+/// 这时按「未开启」处理 —— 不因为读不到状态就把菜单项弄坏。
+pub(crate) fn autostart_enabled(app: &tauri::AppHandle) -> bool {
+    #[cfg(desktop)]
+    {
+        app.autolaunch().is_enabled().unwrap_or(false)
     }
-    tray
-        .on_menu_event(move |app, event| match event.id.as_ref() {
-            "show" => show_main_window(app),
-            "autostart" => {
-                let manager = app.autolaunch();
-                let enable = !manager.is_enabled().unwrap_or(false);
-                let result = if enable {
-                    manager.enable()
-                } else {
-                    manager.disable()
-                };
-                if result.is_ok() {
-                    let _ = autostart_for_menu.set_checked(enable);
-                } else {
-                    log::log("切换开机自启失败");
-                }
-            }
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            // 左键单击托盘图标 = 弹回主窗口（菜单留给右键）。
-            if let tauri::tray::TrayIconEvent::Click {
-                button: tauri::tray::MouseButton::Left,
-                button_state: tauri::tray::MouseButtonState::Up,
-                ..
-            } = event
-            {
-                show_main_window(tray.app_handle());
-            }
-        })
-        .build(app)?;
-    Ok(())
+    #[cfg(not(desktop))]
+    {
+        let _ = app;
+        false
+    }
 }
 
+/// ★ 「双击就能用」的最后一道保险：dev 服务器不可达时回退到内置资源。
+///
+/// 背景（用户实测踩中，两起症状同源）：
+///   · debug 构建默认加载 `devUrl`（本应用为 http://localhost:1420，
+///     tauri.conf.json 里配的）—— 那是给 `tauri dev` 用的。用户直接
+///     双击 debug exe、又没有 Vite 在跑时，WebView2 就去连 1420，
+///     结果先是「无法访问此页面」（WebView2 错误页），再是
+///     「localhost 拒绝连接」。
+///   · 用户看到这两句话，会以为是应用坏了，实际上只是 devUrl 无人应答。
+///
+/// 这里在应用**每次启动后**探测 devUrl：连得上就用（开发模式一切照旧），
+/// 连不上就把窗口导航到**内置资源**（`http://tauri.localhost/index.html`）——
+/// 内置资源在编译时总会被嵌入（release 用的就是它），所以 debug 构建
+/// 从此也能脱离 Vite 独立运行。
+///
+/// 探测方式：对 localhost:1420 做一次 TCP 连接（300ms 超时）。
+/// 不用 HTTP 请求 —— 我们只需要知道"端口上有没有人"，不需要它的应答。
+fn ensure_frontend_reachable(app: &tauri::AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // 给 WebView 一点初始化时间再探测；导航本身在 setup 后跑都行。
+        let _ = tauri::async_runtime::spawn_blocking(|| {
+            std::thread::sleep(std::time::Duration::from_millis(1200));
+        })
+        .await;
+
+        let dev_up = std::net::TcpStream::connect_timeout(
+            // 字面量端口串，parse 不会失败；写死 unwrap 即可
+            // （SocketAddr 的 FromStr 对合法字面量恒返回 Ok）。
+            &"127.0.0.1:1420".parse().unwrap(),
+            std::time::Duration::from_millis(300),
+        )
+        .is_ok();
+
+        if dev_up {
+            // 开发服务器在跑 —— 什么都不用做。
+            return;
+        }
+
+        // devUrl 无人应答：把两个窗口都导航到内置资源。
+        for (label, path) in [("main", "index.html"), ("overlay", "index.html#overlay")] {
+            let Some(win) = app.get_webview_window(label) else {
+                continue;
+            };
+            let url = tauri::Url::parse(&format!("http://tauri.localhost/{path}"));
+            match url {
+                Ok(url) => {
+                    if let Err(err) = win.navigate(url) {
+                        crate::log::log(format!("回退导航失败（{label}）：{err}"));
+                    } else {
+                        crate::log::log(format!("devUrl 不可达，{label} 已回退到内置资源"));
+                    }
+                }
+                Err(err) => crate::log::log(format!("回退地址解析失败：{err}")),
+            }
+        }
+    });
+}
