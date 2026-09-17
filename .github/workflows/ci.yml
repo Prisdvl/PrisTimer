@@ -63,6 +63,21 @@ jobs:
         with:
           components: clippy
 
+      # ★ 必须先造一个 frontendDist 目录（2026-09-17 补）：
+      #   `tauri::generate_context!()` 在**编译期**校验 tauri.conf.json 里的
+      #   `frontendDist`（"../dist"）存在，而干净的 checkout 里它是空的 ——
+      #   proc macro 直接 panic：The `frontendDist` configuration is set to
+      #   "../dist" but this path doesn't exist。于是这个 job 自加入起就没绿过，
+      #   而本地跑 clippy 时 dist 一直在（刚跑过 tauri build），"本地预演全绿"
+      #   把这层掩盖了 —— 门禁形同虚设了两轮。
+      #   本 job 只做 lint 与单测，不需要真实前端产物（真正的打包在 Release
+      #   workflow 里，那边完整跑 npm ci + vite build），建占位目录即可。
+      - name: Stub frontend dist (generate_context! requires the path to exist)
+        shell: bash
+        run: |
+          mkdir -p dist
+          printf '<!doctype html><title>ci stub</title>\n' > dist/index.html
+
       - name: Cache cargo
         uses: actions/cache@v4
         with:
