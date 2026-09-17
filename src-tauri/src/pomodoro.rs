@@ -44,6 +44,12 @@ impl PomodoroManager {
         self.machine.config()
     }
 
+    /// 某个阶段的时长（按当前配置）。热应用配置时，编排层用它给
+    /// 进行中的阶段重设引擎上限。
+    pub fn duration_of(&self, phase: Phase) -> u64 {
+        self.machine.duration_of(phase)
+    }
+
     /// 热应用新配置。阶段与计数保持不变 —— 正在跑的阶段按引擎里已有的
     /// limit 走完，之后的阶段用新时长（是否重武装表盘由 lib.rs 决定）。
     pub fn apply_config(&mut self, config: PomodoroConfig) -> PomodoroStatus {

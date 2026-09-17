@@ -52,7 +52,11 @@ pub(crate) fn pomodoro_config_get(pomodoro: State<'_, SharedPomodoro>) -> Pomodo
 }
 
 /// 更新番茄钟配置：校验 → 落库 → 热应用。
-/// 若模式开启且引擎正停在 Idle（表盘未在计时），立即按新专注时长重武装。
+/// 热应用按引擎状态分三路，保证设置面板"即改即见"：
+/// - Idle（表盘未计时）→ Reset + SetLimit(新专注时长)，表盘立即换新；
+/// - Running / Paused → 按当前阶段的新时长 SetLimit：保留已进行的
+///   elapsed，剩余时间按新上限重算（进行中的番茄"中途改上限"）；
+/// - Finished → 不动：番茄回调马上会用新配置武装下一阶段。
 #[tauri::command]
 pub(crate) fn pomodoro_config_set(
     config: PomodoroConfig,
@@ -77,17 +81,25 @@ pub(crate) fn pomodoro_config_set(
 
     let status = lock(&pomodoro).apply_config(config);
 
-    // 空闲且开着番茄模式 → 表盘立刻按新专注时长重武装；
-    // 正在计时/暂停的阶段不动，跑完后自然用新配置。
-    let idle = cache
-        .lock()
-        .ok()
-        .and_then(|c| c.as_ref().map(|s| s.state == TimerState::Idle))
-        .unwrap_or(false);
-    if idle && status.enabled {
+    let snapshot = cache.lock().ok().and_then(|c| *c);
+    if status.enabled {
         let runtime = lock(&timer.0);
-        runtime.send(Command::Reset);
-        runtime.send(Command::SetLimit(Some(config.focus_ms)));
+        match snapshot.map(|s| s.state) {
+            Some(TimerState::Idle) => {
+                // 空闲 → 表盘立刻按新专注时长重武装（回到第一个番茄）。
+                runtime.send(Command::Reset);
+                runtime.send(Command::SetLimit(Some(config.focus_ms)));
+            }
+            Some(TimerState::Running | TimerState::Paused) => {
+                // 进行中的阶段：只换上限，不清 elapsed。
+                let phase_limit = lock(&pomodoro).duration_of(status.phase);
+                runtime.send(Command::SetLimit(Some(phase_limit)));
+            }
+            _ => {
+                // Finished：回调即将接走；或缓存未就绪（启动极早期）——
+                // 两种情况都无需重武装，下一次阶段切换自然用新配置。
+            }
+        }
     }
     Ok(status)
 }

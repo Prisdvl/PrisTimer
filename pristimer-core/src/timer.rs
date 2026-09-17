@@ -49,9 +49,14 @@ impl<C: Clock> TimerCore<C> {
     }
 
     pub fn set_limit(&mut self, limit_ms: Option<u64>) {
-        if self.state == TimerState::Idle {
-            self.limit_ms = limit_ms;
-        }
+        // 全状态生效。limit 只参与 `remaining = limit - elapsed` 的计算与
+        // 到点判定，与锚点/累积无关，随时可换：
+        // - Running：下一拍起按新上限判定；若新上限已低于已用时长，
+        //   下一拍立即 Finished —— 倒计时"中途改上限"的正确语义。
+        // - Paused：恢复后按新上限走。
+        // 之前"仅 Idle 生效"会让番茄钟在专注/休息进行中改配置被静默忽略，
+        // 用户看到的表盘与设置面板不一致（自定义不生效的直接根因）。
+        self.limit_ms = limit_ms;
     }
 
     /// 从持久化记录恢复一段已用时长，并停在 `Paused`。
@@ -231,27 +236,37 @@ mod tests {
     #[test]
     fn limit_change() {
         let mut t = new_stopwatch();
-        // 场景1：Idle状态，可以修改limit
+        // 场景1：Idle 状态，可以修改 limit
         t.set_limit(Some(1000));
         assert_eq!(t.limit_ms(), Some(1000));
-        // 场景2：Running状态，修改无效
-        t.start();
-        t.set_limit(Some(9999));
-        assert_eq!(t.limit_ms(), Some(1000)); // 仍然是旧值，没改成9999
 
-        // 场景3：Paused状态，修改无效
+        // 场景2：Running 状态，修改同样生效（保留 elapsed，重算剩余）
+        t.start();
+        t.clock().advance(400);
+        t.set_limit(Some(2_000));
+        assert_eq!(t.limit_ms(), Some(2_000));
+        assert_eq!(t.remaining_ms(), Some(1_600));
+
+        // 场景3：Paused 状态，修改同样生效
         t.pause();
-        t.set_limit(Some(8888));
-        assert_eq!(t.limit_ms(), Some(1000));
+        t.set_limit(Some(1_000));
+        assert_eq!(t.limit_ms(), Some(1_000));
+        assert_eq!(t.remaining_ms(), Some(600));
+    }
 
-        // 场景4：Finished状态，修改无效
-        // 先把计时器跑超时进入Finished
+    #[test]
+    fn shrinking_limit_below_elapsed_finishes_on_next_poll() {
+        // 把上限改到已用时长之下：下一次 poll 立即到点，
+        // elapsed 封顶到新上限 —— "中途改上限"不允许出现负剩余。
+        let mut t = new_stopwatch();
+        t.set_limit(Some(10_000));
         t.start();
-        t.clock().advance(2000);
-        t.poll(); // 触发超时，state变为Finished
+        t.clock().advance(4_000);
+        t.set_limit(Some(2_000));
+        assert!(t.poll());
         assert_eq!(t.state(), TimerState::Finished);
-        t.set_limit(Some(7777));
-        assert_eq!(t.limit_ms(), Some(1000));
+        assert_eq!(t.elapsed_ms(), 2_000);
+        assert_eq!(t.remaining_ms(), Some(0));
     }
 
     #[test]
