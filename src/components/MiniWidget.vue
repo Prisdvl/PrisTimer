@@ -23,7 +23,7 @@
 
 import { computed } from "vue";
 import { timerApi } from "../api";
-import { useInsight, batteryText } from "../composables/useInsight";
+import { useInsight, batteryText, ageLabel } from "../composables/useInsight";
 
 defineProps<{
   display: string;
@@ -36,7 +36,7 @@ defineProps<{
 
 const emit = defineEmits<{ toggle: []; tray: [] }>();
 
-const { snapshot } = useInsight();
+const { snapshot, quotaStale } = useInsight();
 
 /** 已连接设备（Rust 侧已按"音频优先"排好序）。264px 宽最多容得下两台。 */
 const devices = computed(() => {
@@ -67,11 +67,19 @@ const quotaPct = computed(() => {
 /** 剩余低于 20% 转警示色。 */
 const quotaLow = computed(() => (quotaPct.value ?? 100) < 20);
 
-/** 查询失败（凭据被拒 / 网络不可用 / 接口异常）—— 与"没配 Key"区分开。 */
+/** 查询失败（凭据被拒 / 网络不可用 / 接口异常）—— 与"没配 Key"区分开。
+ *
+ *  ★ 注意它现在**只在真的没有值可用时**才会亮（2026-09-17 第 30 轮）：
+ *    周期查询偶发失败时 useInsight 会保留上一次的成功值并标 `quotaStale`，
+ *    那时 `snapshot.quota` 仍是 `ok`，红色不出现 —— 走 `.stale` 那条更轻的通道。
+ *    红色专门留给"确实拿不到数"（首次查询就失败、凭据被拒、超过保留上限）。 */
 const quotaBad = computed(() => {
   const s = snapshot.value.quota.status;
   return s === "unauthorized" || s === "network" || s === "apiError";
 });
+
+/** 最近一次刷新失败：数值是保留的旧值（软状态，见 useInsight）。 */
+const quotaIsStale = computed(() => quotaStale.value !== null);
 
 /** 悬停提示给全名 + 精确电量（胶囊里只放图标与数字）。 */
 function devTitle(name: string, percent: number | null): string {
@@ -81,7 +89,14 @@ function devTitle(name: string, percent: number | null): string {
 const quotaTitle = computed(() => {
   const q = snapshot.value.quota;
   if (q.status !== "ok") return "额度不可用";
-  return monthWindow.value ? `本月额度剩余 ${quotaPct.value}%` : `额度剩余 ${quotaPct.value}%`;
+  const base = monthWindow.value
+    ? `本月额度剩余 ${quotaPct.value}%`
+    : `额度剩余 ${quotaPct.value}%`;
+  // 陈旧时把"数据多旧 + 为什么没更新"一并交代 —— 迷你窗里唯一能放解释的地方。
+  if (quotaStale.value) {
+    return `${base}（显示 ${ageLabel(snapshot.value.quotaAtMs)}的数据；最近一次刷新失败：${quotaStale.value.message}）`;
+  }
+  return base;
 });
 </script>
 
@@ -145,7 +160,11 @@ const quotaTitle = computed(() => {
         </span>
 
         <!-- 额度：电池图标 + 剩余百分比（与设备同形，靠图标区分语义） -->
-        <span class="chip quota" :class="{ low: quotaLow, bad: quotaBad }" :title="quotaTitle">
+        <span
+          class="chip quota"
+          :class="{ low: quotaLow, bad: quotaBad, stale: quotaIsStale }"
+          :title="quotaTitle"
+        >
           <svg
             class="c-ic"
             viewBox="0 0 24 24"
@@ -162,6 +181,8 @@ const quotaTitle = computed(() => {
             <path d="M21 10.5v3" />
           </svg>
           <i class="c-val">{{ quotaPct !== null ? `${quotaPct}%` : "—" }}</i>
+          <!-- 「未更新」的一个像素级标记：整格降成灰调之外再给一点结构性提示 -->
+          <i v-if="quotaIsStale" class="c-dot" aria-hidden="true" />
         </span>
       </span>
     </div>
@@ -289,6 +310,13 @@ const quotaTitle = computed(() => {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 30%, var(--glass-border));
 }
+/* 软失败（"未更新"）：数值仍可信（上一次的成功结果），只是这次没问到 ——
+   把强调色降成"旧值"的中性灰调，红色留给"确实没有值"。
+   放在 .low 之前：数值真的低于 20% 时"快用完了"比"没更新"更该被看见。 */
+.chip.quota.stale {
+  color: var(--ink-dim);
+  border-color: color-mix(in srgb, var(--ink) 18%, transparent);
+}
 .chip.quota.low {
   color: #e8b64c;
   border-color: color-mix(in srgb, #e8b64c 38%, var(--glass-border));
@@ -296,6 +324,15 @@ const quotaTitle = computed(() => {
 .chip.quota.bad {
   color: #ff8a8a;
   border-color: color-mix(in srgb, #ff8a8a 34%, var(--glass-border));
+}
+/* 未更新的小圆点：颜色随主题（浅色主题下自动变深） */
+.c-dot {
+  flex: none;
+  width: 4px;
+  height: 4px;
+  margin-left: 0.06rem;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ink) 46%, transparent);
 }
 
 .mini-row {

@@ -23,9 +23,16 @@
 // ---------------------------------------------------------------------------
 
 import { computed } from "vue";
-import { useInsight, batteryText, shortName, deviceLine, quotaLine } from "../composables/useInsight";
+import {
+  useInsight,
+  batteryText,
+  shortName,
+  deviceLine,
+  quotaLine,
+  ageLabel,
+} from "../composables/useInsight";
 
-const { snapshot } = useInsight();
+const { snapshot, quotaStale } = useInsight();
 
 /** 多窗口额度（opencode Go：滚动 / 本周 / 本月）。空数组 = 单值接口。 */
 const quotaWindows = computed(() =>
@@ -77,12 +84,23 @@ function resetText(iso: string | null): string {
 function devTitle(name: string, percent: number | null): string {
   return `${name}${percent === null ? " · 电量未知" : ` · ${percent}%`}`;
 }
+
+/**
+ * 最近一次刷新失败（数值是保留的旧值）。
+ *
+ * 悬浮窗是**主窗口最小化后唯一还在的界面**，所以"这个数字有多旧"必须
+ * 在这里说全 —— 状态栏还能靠 title 悬停解释，浮窗的信息得自己站得住。
+ */
+const quotaIsStale = computed(() => quotaStale.value !== null);
+const quotaStaleAge = computed(() => ageLabel(snapshot.value.quotaAtMs));
+/** 失败原因（"网络不可用" / "接口异常：…"）—— 与状态栏同源，都出自 quotaLine。 */
+const quotaStaleReason = computed(() => quotaStale.value?.message ?? "");
 </script>
 
 <template>
   <div class="overlay">
     <!-- ── 主体：本月额度 ────────────────────────────────────── -->
-    <section class="card quota" :class="snapshot.quota.status">
+    <section class="card quota" :class="[snapshot.quota.status, { stale: quotaIsStale }]">
       <header class="q-head">
         <span class="q-label">本月额度</span>
         <span v-if="monthWindow" class="q-reset">{{ resetText(monthWindow.resetsAt) }}</span>
@@ -104,6 +122,12 @@ function devTitle(name: string, percent: number | null): string {
             </span>
           </p>
         </Transition>
+        <!-- 软失败：数字保留，把"多旧 + 为什么没更新"补在下面 -->
+        <p v-if="quotaIsStale" class="q-stale">
+          <i class="q-dot" aria-hidden="true" />未更新 · {{ quotaStaleAge }}的数据（{{
+            quotaStaleReason
+          }}）
+        </p>
       </template>
 
       <!-- 非多窗口接口（或未配置 / 出错）：退回一句话 -->
@@ -259,6 +283,29 @@ function devTitle(name: string, percent: number | null): string {
   font-style: normal;
   font-variant-numeric: tabular-nums;
   color: var(--ink-dim);
+}
+/* 软失败（"未更新"）：数值保留、卡片不上告警边框，只把标题与数字降一档，
+   再用一行小字说清"多旧 + 为什么"。 */
+.quota.stale .q-value {
+  color: var(--ink-dim);
+}
+.q-stale {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  margin: 0.12rem 0 0;
+  font-size: 0.6rem;
+  line-height: 1.3;
+  /* 这一行是浮窗上"数据是旧的"的**唯一**解释，比同级的次要信息
+     （.q-minor 用 --ink-faint）再提一档，别让它自身也看不清。 */
+  color: var(--ink-dim);
+}
+.q-dot {
+  flex: none;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ink) 46%, transparent);
 }
 .q-line {
   margin: 0.2rem 0 0;

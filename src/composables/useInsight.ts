@@ -14,6 +14,10 @@
 //        数据也不会永远停在启动那一刻。
 //   前端**不**承担周期扫描 —— 那会变成「每个窗口各自刷」的多实例竞态。
 //
+// ★ 快照的写入口只有两处：`applyBluetooth`（蓝牙，直接覆盖）与 `ingestQuota`
+//   （额度，走 `planQuotaIngest` 的"软失败保留旧值"规则）。任何新链路都必须
+//   汇到这两处，不要再直接 `snapshot.value = ...`。
+//
 // ★ 文案出处：`deviceLine` / `quotaLine` 是本文件里唯一的文案工厂，
 //   与 Rust 侧 `insight::tooltip_text` 的分支逐条对齐（两边必须同步改，
 //   这是跨语言共享文案的固定成本）。状态栏 / 悬浮窗 / 未来任何展示
@@ -35,6 +39,16 @@ const QUOTA_STALE_MS = 5.5 * 60_000;
 /** 兜底轮询检查间隔。1 秒一次做"过期判定"足够了。 */
 const POLL_INTERVAL_MS = 1_000;
 
+/**
+ * 「保留旧值」的**上限**（2026-09-17 第 30 轮）。
+ *
+ * 周期查询偶发失败时我们保留上一次的额度值（见 `planQuotaIngest`），
+ * 但保留不是无限的：后端 5 分钟一刷，连续 6 次都问不到说明网络是真的断了，
+ * 这时候还端着一小时前的数字说"本月 87%"就是误导 —— 比红色错误更糟。
+ * 超过这个时长就如实落地失败状态，把"问不到"摆在明面上。
+ */
+const QUOTA_HOLD_MAX_MS = 30 * 60_000;
+
 // ---------------------------------------------------------------------------
 // 类型守卫
 // ---------------------------------------------------------------------------
@@ -45,6 +59,57 @@ export function isBtOk(status: BtStatus): status is Extract<BtStatus, { status: 
 
 export function isQuotaOk(status: QuotaStatus): status is Extract<QuotaStatus, { status: "ok" }> {
   return status.status === "ok";
+}
+
+// ---------------------------------------------------------------------------
+// 额度落地规则（唯一的决策点，导出以便单测锁定语义）
+// ---------------------------------------------------------------------------
+
+/** 「最近一次额度查询没问到」的软状态。 */
+export interface QuotaStale {
+  /** 失败发生的时刻（Unix 毫秒）。 */
+  atMs: number;
+  /** 人话原因（`quotaLine` 的输出，如"网络不可用"）。 */
+  message: string;
+}
+
+/** `planQuotaIngest` 的结论：落地这次结果，还是保留旧值只标陈旧。 */
+export type QuotaIngestPlan = "apply" | "hold";
+
+/**
+ * 一次额度查询结果该不该覆盖快照。
+ *
+ * ★ 问题（用户 2026-09-17 拍板要改的行为）：
+ *   窗口里那个数值是**上一次成功**的结果。周期性查询（Rust 后台 5 分钟一次、
+ *   前端过期兜底）偶发超时 —— 实测日志里就有 `WinHTTP 12002` —— 旧实现
+ *   无条件覆盖，一次超时就把 5 分钟前刚拿到的 87% 糊成红色"网络不可用"。
+ *   用户看到的是"数据没了"，而事实只是"这一次没问到"。
+ *
+ * ★ 所以：**保留旧值 + 标记陈旧**，把"问不到"和"没有值"分开表达。但三种
+ *   情况必须如实落地，不能藏：
+ *
+ *   · `user` 显式动作（点「立即刷新」、保存配置）—— 用户刚动了手，必须
+ *     看到结果，否则就是"点了没反应"；
+ *   · `notConfigured` —— 这是配置状态而非网络抖动，藏着会让用户以为已经配好了；
+ *   · `unauthorized` —— 401 是凭据被拒，属于可行动的硬错误，不该被降级成暗色。
+ *
+ * ★ 手里没有可保留的好值时（首次查询就失败）也只能如实落地 ——
+ *   "陈旧"标记的前提是**有旧值**。跨重启不保留（旧值不落盘）：拿一个
+ *   昨天的数字当"本月额度"比红色错误更误导。
+ *
+ * 纯函数，无副作用 —— 单测直接喂参数就能覆盖全部分支。
+ */
+export function planQuotaIngest(
+  next: QuotaStatus,
+  held: { quota: QuotaStatus; atMs: number },
+  opts: { user?: boolean; now: number },
+): QuotaIngestPlan {
+  if (next.status === "ok") return "apply";
+  if (opts.user) return "apply";
+  if (next.status === "notConfigured" || next.status === "unauthorized") return "apply";
+  if (held.quota.status !== "ok") return "apply";
+  if (opts.now - held.atMs >= QUOTA_HOLD_MAX_MS) return "apply";
+  return "hold";
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +233,17 @@ function emptySnapshot(): InsightSnapshot {
 
 const snapshot = ref<InsightSnapshot>(emptySnapshot());
 
+/**
+ * 「最近一次额度查询没问到」的软状态 —— 此时 `snapshot.quota` 里是**上一次
+ * 成功拿到的好值**，而不是失败本身（决策规则见 `planQuotaIngest`）。
+ *
+ * 展示层用它把"数据是旧的"这件事说清楚：状态栏加一枚"陈旧"小标、迷你窗把
+ * 额度芯片降饱和、悬浮窗补一行"刷新失败 · 显示 N 分钟前的数据"。
+ * 它的存在**不动** `quotaAtMs` —— 那个时间戳始终是"这个值是什么时候拿到的"，
+ * 保留旧值时它就该继续变老，`ageLabel` 才会诚实地说"12 分钟前"。
+ */
+const quotaStale = ref<QuotaStale | null>(null);
+
 /** 托盘是否已就绪（Rust 建好托盘后发 `insight:tray-ready`）。
  *  只有就绪后「显示信息浮窗」按钮才有意义。 */
 const trayReady = ref(false);
@@ -183,7 +259,11 @@ async function subscribe(): Promise<void> {
     // 单例只订阅一次、且存活与应用同长，不需要保留 unlisten 句柄
     // （组件各自挂载/卸载互不影响 —— 状态在模块作用域，不随组件销毁）。
     await listen<InsightSnapshot>("insight:update", (event) => {
-      snapshot.value = event.payload;
+      // ★ 不整个 `snapshot.value = event.payload`（2026-09-17 第 30 轮）：
+      //   后端的周期任务失败时**也会**推一份带失败额度状态的快照
+      //   （`spawn_quota_task` 无论成败都 `publish`），整个赋值就等于
+      //   把"这一次没问到"当成"没有数据"糊上去。拆开各自落地。
+      applySnapshot(event.payload);
       // ★ `insight:update` 能到达，说明 Rust 的托盘与刷新任务都已就绪
       //   （它们在同一处装配）。用它给 trayReady 兜底 ——
       //   「托盘就绪」事件可能在页面加载完成之前就广播了，
@@ -240,7 +320,7 @@ async function init(): Promise<void> {
   // 必须主动拉一次 —— 与 timer:update 的处理完全同构。
   try {
     const current = await insightApi.current();
-    if (current) snapshot.value = current;
+    if (current) applySnapshot(current);
   } catch {
     /* 保持空快照，兜底轮询会补 */
   }
@@ -249,6 +329,43 @@ async function init(): Promise<void> {
 // ---------------------------------------------------------------------------
 // 动作
 // ---------------------------------------------------------------------------
+
+/**
+ * 把一份**后端推来的完整快照**拆开落地。
+ *
+ * 蓝牙直接覆盖（它没有"闪红"问题：没设备就是没设备，两种表达等价）；
+ * 额度走 `ingestQuota` 的软失败规则。两个时间戳都取自载荷 —— 那是数据
+ * 真正被取到的时刻，不是前端的接收时刻，本机时钟偏一点也不会漂。
+ */
+function applySnapshot(next: InsightSnapshot): void {
+  snapshot.value = {
+    ...snapshot.value,
+    bluetooth: next.bluetooth,
+    bluetoothAtMs: next.bluetoothAtMs || Date.now(),
+  };
+  ingestQuota(next.quota);
+}
+
+/**
+ * 额度结果的**唯一写入口**。决策交给 `planQuotaIngest`，这里只执行。
+ */
+function ingestQuota(status: QuotaStatus, opts: { user?: boolean } = {}): void {
+  const now = Date.now();
+  const plan = planQuotaIngest(
+    status,
+    { quota: snapshot.value.quota, atMs: snapshot.value.quotaAtMs },
+    { user: opts.user, now },
+  );
+
+  if (plan === "apply") {
+    quotaStale.value = null;
+    snapshot.value = { ...snapshot.value, quota: status, quotaAtMs: now };
+    return;
+  }
+  // "hold"：`quota` 与 `quotaAtMs` 都原地不动（那个值确实是那个时刻拿到的），
+  // 只记下"这一次没问到"，交给展示层弱化表达。
+  quotaStale.value = { atMs: now, message: quotaLine(status) };
+}
 
 /** 用户点「立即刷新」：带节流回执。 */
 async function refreshBluetooth(): Promise<boolean> {
@@ -271,19 +388,23 @@ async function refreshBluetooth(): Promise<boolean> {
   }
 }
 
-/** 用户点「立即刷新额度」。 */
+/** 用户点「立即刷新额度」。用户显式动作 → 失败如实落地，不做软处理。 */
 async function refreshQuota(): Promise<void> {
   try {
     const status = await insightApi.quotaQuery();
-    applyQuota(status);
+    applyQuota(status, { user: true });
   } catch {
     /* 失败留给下一次事件/轮询 */
   }
 }
 
-/** 直接把最新额度状态写进快照（配置保存等场景）。 */
-function applyQuota(status: QuotaStatus): void {
-  snapshot.value = { ...snapshot.value, quota: status, quotaAtMs: Date.now() };
+/** 直接把最新额度状态写进快照（配置保存等场景）。
+ *
+ *  ★ 默认就是 `user` 语义 —— 这个函数的调用方只有"用户刚保存完配置"这一处，
+ *    它的结果必须如实显示（用户等着看"配好了没"）。周期性链路一律走
+ *    `applySnapshot` / `ingestQuota`，不经过这里。 */
+function applyQuota(status: QuotaStatus, opts: { user?: boolean } = { user: true }): void {
+  ingestQuota(status, opts);
 }
 
 /** 直接把最新蓝牙状态写进快照。 */
@@ -297,13 +418,15 @@ export interface UseInsight {
    *   `devices: BtDevice[]` 变成 `readonly [...]`，与接口的数组类型
    *   互相不兼容，类型上反而更别扭。） */
   snapshot: Ref<InsightSnapshot>;
+  /** 最近一次额度查询失败的软状态（此时 `snapshot.quota` 仍是上一次的好值）。 */
+  quotaStale: Ref<QuotaStale | null>;
   /** 托盘是否已就绪。 */
   trayReady: Ref<boolean>;
   /** 最近一次「立即刷新」是否被节流。 */
   lastBtThrottled: Ref<boolean>;
   refreshBluetooth: () => Promise<boolean>;
   refreshQuota: () => Promise<void>;
-  /** 保存额度配置后落地返回的最新状态。 */
+  /** 保存额度配置后落地返回的最新状态（用户语义：失败如实显示）。 */
   applyQuota: (status: QuotaStatus) => void;
   applyBluetooth: (status: BtStatus) => void;
   deviceLine: (status: BtStatus) => string;
@@ -315,6 +438,7 @@ export function useInsight(): UseInsight {
   void init();
   return {
     snapshot,
+    quotaStale,
     trayReady,
     lastBtThrottled,
     refreshBluetooth,

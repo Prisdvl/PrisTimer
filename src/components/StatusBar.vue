@@ -19,6 +19,7 @@ import { insightApi } from "../api";
 
 const {
   snapshot,
+  quotaStale,
   trayReady,
   lastBtThrottled,
   refreshBluetooth,
@@ -67,6 +68,15 @@ const btClass = computed(() => {
 
 // ---- 额度分组 ----
 const quotaText = computed(() => quotaLine(snapshot.value.quota));
+
+/**
+ * 状态色。
+ *
+ * ★ 与 `quotaStale` 的分工（2026-09-17 第 30 轮）：这里的四档描述的是
+ *   **快照里那个值本身**是什么状态；"这一次没问到"不进这里，它为真时
+ *   值仍是上一次的成功结果（`ok`），走 `.stale` 那条更轻的视觉通道 ——
+ *   一次网络抖动不该把整组信息染成告警色。
+ */
 const quotaClass = computed(() => {
   switch (snapshot.value.quota.status) {
     case "ok":
@@ -80,6 +90,9 @@ const quotaClass = computed(() => {
       return "warn";
   }
 });
+
+/** 最近一次刷新失败（显示的是保留的旧值）。 */
+const quotaIsStale = computed(() => quotaStale.value !== null);
 
 /** 多窗口额度（opencode Go：滚动 / 本周 / 本月）。空数组表示单值接口。 */
 const quotaWindows = computed(() =>
@@ -239,6 +252,19 @@ const btTitle = computed(() => {
   const base = btText.value;
   return snapshot.value.bluetoothAtMs > 0 ? `${base}（${btAge.value}）` : base;
 });
+
+/**
+ * 额度分组的悬停提示 —— 这里也是"陈旧"状态的**主要出口**：
+ * 状态栏能放的字太少，可见部分只加一枚"未更新"小标，
+ * 具体是哪一次刷新、什么原因、数据多旧，全部在这一句里说清。
+ */
+const quotaTitle = computed(() => {
+  if (!quotaIsStale.value) return quotaAge.value;
+  return `${quotaText.value}（显示 ${quotaAge.value}的数据；最近一次刷新失败：${quotaStale.value?.message}）`;
+});
+
+/** 详情浮层里那行"未更新"的原因。 */
+const quotaStaleReason = computed(() => quotaStale.value?.message ?? "");
 </script>
 
 <template>
@@ -299,12 +325,15 @@ const btTitle = computed(() => {
     </div>
 
     <!-- ── 额度分组 ─────────────────────────────────────────── -->
-    <div class="group" :class="quotaClass" :title="quotaAge">
+    <div class="group" :class="[quotaClass, { stale: quotaIsStale }]" :title="quotaTitle">
       <!-- API 额度图标：lucide「credit-card」图标路径 -->
       <svg class="g-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <rect width="20" height="14" x="2" y="5" rx="2" />
         <path d="M2 10h20" />
       </svg>
+      <!-- 「未更新」小标：数值仍是上一次的成功结果，只是这次没问到。
+           可见部分只有一个词，原因在 title 与详情浮层里。 -->
+      <i v-if="quotaIsStale" class="stale-tag">未更新</i>
       <!-- 单值接口（非 opencode Go）显示一句话；多窗口只露"本月"，点击看全部 -->
       <span v-if="!monthWindow" class="summary">{{ quotaText }}</span>
       <button
@@ -374,7 +403,13 @@ const btTitle = computed(() => {
           <span class="qp-pct">{{ pct(win.remainingPercent) }}</span>
           <span class="qp-reset">{{ resetText(win.resetsAt) }}</span>
         </div>
-        <p class="cfg-hint">更新于 {{ quotaAge }}</p>
+        <p class="cfg-hint">
+          更新于 {{ quotaAge }}
+          <template v-if="quotaIsStale">
+            ·
+            <span class="qp-stale">最近一次刷新失败：{{ quotaStaleReason }}</span>
+          </template>
+        </p>
       </div>
     </Transition>
 
@@ -482,6 +517,36 @@ const btTitle = computed(() => {
 }
 .group.err {
   color: #e08b8b;
+}
+
+/* ------------------------------------------------------- "未更新"（软失败）
+   一次网络抖动不该把整组染成告警色 —— 数值本身仍然是可信的（上一次的成功结果），
+   只是"这一次没问到"。所以这里只做两件事：把强调色降下来，并挂一枚小标。
+   颜色一律走 --ink 令牌混合，浅色主题下同样是"变淡"而不是"消失"。 */
+.group.stale {
+  color: var(--ink-dim);
+}
+.group.stale .g-icon {
+  color: var(--ink-faint);
+}
+/* 百分比本身也必须跟着降下来：`.chip .bat` 是显式 `--accent`，
+   只把 `.group` 变淡的话数值仍是一副"新鲜"的强调色，与"这是旧值"
+   自相矛盾 —— 实测第一版就是这样（数值绿着、旁边挂着"未更新"）。 */
+.group.stale .chip .bat {
+  color: var(--ink-dim);
+}
+.stale-tag {
+  padding: 0 0.3rem;
+  border: 1px dashed color-mix(in srgb, var(--ink) 28%, transparent);
+  border-radius: 4px;
+  font-style: normal;
+  font-size: 0.62rem;
+  letter-spacing: 0.02em;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+.qp-stale {
+  color: var(--ink-faint);
 }
 
 .summary {
@@ -805,6 +870,11 @@ const btTitle = computed(() => {
      这里用容器类 `has-devices` 而不是兄弟选择器 —— `.summary` 在
      `.devices` 之前，`~` 选不到它。 */
   .group.has-devices .summary {
+    display: none;
+  }
+  /* 窄窗下"未更新"小标让位给数值本身：状态栏一旦换行会顶起整页布局，
+     title 里那一句仍在（悬停可见），信息不丢。 */
+  .stale-tag {
     display: none;
   }
 }
