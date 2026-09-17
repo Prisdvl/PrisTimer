@@ -3,7 +3,7 @@
 本项目的所有显著变更都记录在此文件中。
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [0.5.0] — 2026-09-17
 
 ### 新增
 
@@ -122,7 +122,8 @@
 - 前端 vitest 14 例（date / tags / useCountUp）；Rust 测试 50 例
 - 顶层 Cargo workspace（core / store / src-tauri 统一 lock 与 target）
 
-[Unreleased]: https://github.com/Prisdvl/PrisTimer/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Prisdvl/PrisTimer/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Prisdvl/PrisTimer/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Prisdvl/PrisTimer/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/Prisdvl/PrisTimer/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Prisdvl/PrisTimer/releases/tag/v0.3.0
