@@ -68,6 +68,32 @@ export function batteryText(percent: number | null): string {
   return percent === null ? "电量未知" : `${percent}%`;
 }
 
+/**
+ * 设备名缩写 —— 状态栏与悬浮窗都要用（一行要塞好几台设备）。
+ *
+ * 规则（按顺序）：
+ *   1. 有连字符取后段 —— `AULA-SC580SE` → `SC580SE`
+ *   2. 去掉开头的纯品牌词 —— `EDIFIER MT6` → `MT6`、`ATK A9 Nearlink` → `A9 Nearlink`
+ *   3. 截到第一个空格 —— `A9 Nearlink` → `A9`、`F87Pro 5.0` → `F87Pro`
+ *
+ * 全名始终保留在 DOM 的 `title` 里（悬停可见），所以缩错了也不会丢信息。
+ */
+export function shortName(name: string): string {
+  if (!name) return "未知设备";
+  let s = name.trim();
+
+  const dash = s.lastIndexOf("-");
+  if (dash > 0 && dash < s.length - 1) s = s.slice(dash + 1);
+
+  const brand = s.match(/^([A-Z][A-Z0-9]{2,})\s+(.+)$/);
+  if (brand) s = brand[2];
+
+  const space = s.indexOf(" ");
+  if (space > 0) s = s.slice(0, space);
+
+  return s.length > 14 ? `${s.slice(0, 13)}…` : s;
+}
+
 /** 蓝牙整体一句话。分支与 Rust 侧 `device_line` 对齐。 */
 export function deviceLine(status: BtStatus): string {
   switch (status.status) {
@@ -99,7 +125,12 @@ export function quotaLine(status: QuotaStatus): string {
     case "notConfigured":
       return "未配置 API Key";
     case "unauthorized":
-      return "API Key 无效";
+      // ★ 不要写成"API Key 无效"（2026-09-17 修正）。
+      //   实测：同一把 Key 在 /zen/v1/chat/completions 上能通过鉴权
+      //   （返回 400 Model is unavailable 而非 401），说明**凭据本身有效**；
+      //   被拒的是额度那个端点。断言"Key 无效"会把用户引向错误的排查方向。
+      //   这里只报事实（401，服务端拒绝凭据），排查方向交给用户判断。
+      return "额度不可用（401）";
     case "network":
       return "网络不可用";
     case "apiError": {

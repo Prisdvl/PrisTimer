@@ -58,7 +58,13 @@ function toggleSimple(): void {
   simpleMode.value = !simpleMode.value;
 }
 
-function syncTheme(): void {
+/**
+ * 把当前主题写进 `data-theme`（+ 简约模式的 `data-simple`）。
+ *
+ * ★ 导出是给 `main.ts` 的浮窗分支用的：浮窗独立挂载、不经 App.vue，
+ *   必须自己主动应用一次主题（否则落回 :root 默认的深空值）。
+ */
+export function syncTheme(): void {
   document.documentElement.setAttribute("data-theme", theme.value);
   // 简约模式挂 data-simple：CSS 侧可用于关掉特色层的过渡残留
   if (simpleMode.value) document.documentElement.setAttribute("data-simple", "");
@@ -81,6 +87,22 @@ watch(simpleMode, (on) => {
     /* 同上 */
   }
   syncTheme();
+});
+
+// ---------------------------------------------------------------------------
+// 跨窗口同步：主窗口切主题时，悬浮信息窗必须跟着变。
+//
+// 两个 webview 同源、共用同一份 localStorage，所以主窗口写完盘之后，
+// 浏览器会给**另一个文档**派发 `storage` 事件 —— 浮窗据此把主题拉过来。
+// storage 事件不会在写入方自己的文档上触发，且回写的是同值（不再派发），
+// 因此不存在回环。
+// ---------------------------------------------------------------------------
+window.addEventListener("storage", (e) => {
+  if (e.key === THEME_KEY && e.newValue && e.newValue !== theme.value) {
+    theme.value = e.newValue as BgTheme;
+  } else if (e.key === SIMPLE_KEY) {
+    simpleMode.value = e.newValue === "1";
+  }
 });
 
 // ---- 消费入口（多次调用返回同一份状态）------------------------------------

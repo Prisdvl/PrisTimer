@@ -221,12 +221,21 @@ export type BtKind = "classic" | "ble" | "dual";
 /** 电量来源。与 Rust 侧 `BatterySource` 对齐。 */
 export type BatterySource = "bleBas" | "classicSdp" | "systemPnp" | "none";
 
+/**
+ * 设备用途类别（驱动状态栏的类型图标）。与 Rust 侧 `DeviceCategory` 对齐。
+ *
+ * ★ 与 `BtKind` 是两个维度：`kind` 说"怎么连的"（经典/BLE/双模），
+ *   `category` 说"它是干什么的"（耳机/键盘/鼠标）。
+ */
+export type BtCategory = "audio" | "keyboard" | "mouse" | "other";
+
 /** 一台已连接的蓝牙设备。字段名 = Rust 侧 `#[serde(rename_all = "camelCase")]` 的输出。 */
 export interface BtDevice {
   /** 稳定唯一标识（v-for 的 key；**不是**设备名）。 */
   id: string;
   name: string;
   kind: BtKind;
+  category: BtCategory;
   /** 0–100；读不到为 null（需求强制：未知 ≠ 0）。 */
   batteryPercent: number | null;
   batterySource: BatterySource;

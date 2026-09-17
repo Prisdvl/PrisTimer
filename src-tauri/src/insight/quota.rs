@@ -641,7 +641,8 @@ fn quota_status_summary(status: &QuotaStatus) -> String {
             remaining, unit, ..
         } => format!("OK 剩余 {remaining} {unit}"),
         QuotaStatus::NotConfigured => "未配置".to_string(),
-        QuotaStatus::Unauthorized { message } => format!("鉴权失败：{message}"),
+        // 与前端 quotaLine 的 unauthorized 分支保持同一口径（不许断言 Key 无效）
+        QuotaStatus::Unauthorized { message } => format!("额度不可用：{message}"),
         QuotaStatus::Network { message } => format!("网络错误：{message}"),
         QuotaStatus::ApiError { message } => format!("接口错误：{message}"),
     }

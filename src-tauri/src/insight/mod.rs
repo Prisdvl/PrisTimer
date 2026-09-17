@@ -83,6 +83,36 @@ impl DeviceKind {
     }
 }
 
+/// 设备的**用途类别** —— 状态栏那一行用它选图标。
+///
+/// 与 `kind`（经典/BLE/双模）是两个独立维度：`kind` 说明"怎么连的"，
+/// 这里说明"它是干什么的"。状态栏一行要塞好几台设备，只放得下一枚图标，
+/// 所以需要后者。
+///
+/// ★ 判定来源是经典蓝牙的 ClassOfDevice（MajorClass + MinorClass）：
+///
+/// ```text
+/// MajorClass = AudioVideo              → 耳机 / 音箱
+/// MajorClass = Peripheral 且
+///   MinorClass = 0x10 Keyboard         → 键盘
+///   MinorClass = 0x20 Pointing device  → 鼠标
+/// ```
+///
+///   拿不到 ClassOfDevice 的设备一律落到 `Other`（通用图标）——
+///   猜错图标比不猜更难看，而状态栏上没地方解释"我为什么认为它是鼠标"。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DeviceCategory {
+    /// 耳机 / 音箱 / 车机。
+    Audio,
+    /// 键盘。
+    Keyboard,
+    /// 鼠标 / 触摸板。
+    Mouse,
+    /// 其它（含拿不到 ClassOfDevice 的设备）。
+    Other,
+}
+
 /// 一个已连接的蓝牙设备。
 ///
 /// 字段全部 `#[serde(rename_all = "camelCase")]`：前端拿到的就是
@@ -100,6 +130,8 @@ pub struct BtDevice {
     pub name: String,
     /// 设备类型（经典 / BLE / 双模）。
     pub kind: DeviceKind,
+    /// 用途类别（音频 / 键盘 / 鼠标 / 其它）—— 状态栏选图标用。
+    pub category: DeviceCategory,
     /// 电量百分比 0–100。**读不到就是 `None`** —— 需求明确要求
     /// 「设备无法读取电量时电量返回 null」，不要用 0 冒充，
     /// 0% 和「不知道」在界面上是两件事。
@@ -127,8 +159,10 @@ pub enum BatterySource {
     /// `Battery Level`，属性 ID 0x0314）—— Windows 对**已配对**的耳机/
     /// 音箱会在连接时把这条记录缓存在 SDP 数据库里，读它不需要再打扰设备。
     ClassicSdp,
-    /// Windows PnP 设备属性里的电量（`{104EA319-6EE2-47D1-BDDB-47A8CA63B19C},10`）。
-    /// 这是系统层的兜底：只有音频类设备的值可信（见 `is_audio`）。
+    /// Windows 设备属性里的电量（`DEVPKEY_Bluetooth_Battery`，
+    /// `{104EA319-6EE2-4701-BD47-8DDBF425BBE5} 2`）。
+    /// 这是系统层的统一口径：Windows 设置页显示的蓝牙电量读的也是它，
+    /// 现在也是我们唯一的主力来源（BLE 与经典耳机都覆盖）。
     SystemPnp,
     /// 没读到。
     None,
@@ -473,6 +507,7 @@ mod tests {
             id: format!("id-{name}"),
             name: name.to_string(),
             kind,
+            category: DeviceCategory::Other,
             battery_percent: battery,
             battery_source: if battery.is_some() {
                 BatterySource::BleBas

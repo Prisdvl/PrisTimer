@@ -11,25 +11,69 @@
 //!
 //!   而 Windows 自带的 **WinHTTP** 已经解决了全部问题：
 //!     · TLS 走 schannel，直接复用系统证书库与系统代理设置；
-//!     · 默认就支持 gzip/deflate 解压（`WINHTTP_OPTION_DECOMPRESSION` 默认开）；
+//!     · 默认就支持 gzip/deflate 解压；
 //!     · 零新增依赖（`windows` crate 已在依赖树里）；
-//!     · 行为与系统一致 —— 用户在 IE/Edge 里配了代理，这里自动跟随。
+//!     · 行为与系统一致 —— 用户在系统里配了代理，这里自动跟随。
 //!
-//! ★ 一个必须避开的 windows crate 坑：
+//! ★★ 为什么现在**不用子进程**（2026-09-17 回归 WinHTTP）：
+//!
+//!   中间有一版实现改成了 spawn 系统 `curl.exe`（当时的理由是"本机
+//!   WinHttpSendRequest 对任何 HTTPS 都返回 ERROR_INVALID_PARAMETER(87)"）。
+//!   那个方案有个不能接受的副作用：**Tauri 是 GUI 子系统进程、没有控制台**，
+//!   去 spawn 一个控制台程序时 Windows 会为它新建一个控制台窗口 ——
+//!   每查一次额度就在用户眼前闪一个黑窗（用户实测：配置时闪、启动时闪两三个）。
+//!   设 `Stdio::null()` 并不解决问题，那只重定向标准流，不等于 CREATE_NO_WINDOW。
+//!
+//!   回归 WinHTTP 是对的（零子进程 = 黑窗从根上消失），但"87 已不复现"
+//!   这个判断**当时是错的** —— 探测脚本只发了不带自定义头的请求：
+//!     · `get("https://example.com/", &[])`               → 200
+//!     · `get("https://opencode.ai/zen/go/v1/usage", &[])` → 401
+//!   两条都走"无头"分支，恰好绕开了真正的 bug。带 `Authorization` 的
+//!   真实额度查询依然 87，见下面「真凶」一节。
+//!
+//! ★ 一个必须避开的 windows crate 坑（历史记录，当前版本已不复现）：
 //!
 //!   `WinHttpOpen` 的签名里 agent 是 `P0: Param<PCWSTR>`，代理两个参数是
-//!   `P2/P3: Param<PCWSTR>`。传 `None` 时 windows crate 会往
+//!   `P2/P3: Param<PCWSTR>`。旧版 windows crate 在传 `None` 时会往
 //!   `PCWSTR::param()` 里塞 `self.0.as_ptr()` —— 而 `None` 的 `PCWSTR`
-//!   内部是空指针，**空指针调 `as_ptr()` 在 debug 构建下会直接 panic**
-//!   （`Option::unwrap()` on a `None` value）。这不是我们的 bug，是
-//!   windows crate 生成代码里的一个已知缺陷。
+//!   内部是空指针，**空指针调 `as_ptr()` 在 debug 构建下会 panic**。
 //!
-//!   绕法很简单：传**空宽字符串** `"\0"` 而不是 `None`。语义完全等价
-//!   （空串的 `PCWSTR` 是合法指针，WinHTTP 认它），但不再触发那条
-//!   panic 路径。
+//!   为稳妥起见，代理参数一律传 `PCWSTR::null()`（不用 `None`），
+//!   agent 传真实字符串。语义与 WinHTTP 文档一致。
 //!
-//! 非 Windows 平台这里返回一个明确的错误 —— 上层会把它渲染成
-//! 「网络不可用」，不假装查到了。
+//! ★★ 真凶（2026-09-17 定位并修复）：**头部块的长度把结尾 NUL 也算进去了**
+//!
+//!   windows 0.61 把 `WinHttpSendRequest` 的 `lpszheaders` 声明成
+//!   `Option<&[u16]>`，内部实现是：
+//!
+//!   ```text
+//!   lpszheaders.as_deref().map_or(0, |slice| slice.len().try_into().unwrap())
+//!   ```
+//!
+//!   也就是说 **`dwHeadersLength` = slice 的元素个数**。而本模块给 Win32
+//!   用的 `wide()` 会在末尾补一个 NUL 结束符 —— 拿它去传头部，长度就
+//!   多算了 1，WinHTTP 视为非法头部块并返回 `ERROR_INVALID_PARAMETER(87)`。
+//!
+//!   实测矩阵（`examples/winhttp_probe.rs`，同机同 Key）：
+//!
+//!   | 头部块形态                        | 长度含 NUL | 结果        |
+//!   |-----------------------------------|-----------|-------------|
+//!   | 无头（走 `None`，长度 0）          | –         | ✅ 401      |
+//!   | 1 条头 + CRLF                     | 否        | ✅ 401      |
+//!   | 1 条头 + CRLF                     | 是        | ❌ **87**   |
+//!   | 4 条头 + CRLF（本模块旧的写法）     | 是        | ❌ **87**   |
+//!   | 4 条头 + CRLF（现在的写法）        | 否        | ✅ 401      |
+//!
+//!   （401 = 真的到达了服务端，只是 Key 无效 —— 这正是预期行为。）
+//!
+//!   ★ 上一轮之所以误判"87 不复现"，是因为探测脚本构造的是
+//!     `wide("Authorization: Bearer x")` —— **没有 CRLF 结尾**。
+//!     这种"结尾 NUL 但不带 CRLF"的块 WinHTTP 恰好容忍，于是
+//!     一个不带 CRLF 的样本骗过了探测。教训：复现要贴着真实调用构造，
+//!     "简化过的样例"很容易把 bug 简化掉。
+//!
+//!   修法：头部单独构造 —— 每条 `Name: value\r\n`，**不补 NUL**，
+//!   由 `header_block()` 统一产出（见其文档与单测）。
 
 use std::time::Duration;
 
@@ -56,7 +100,7 @@ pub enum HttpError {
     Timeout(String),
     /// TLS / 证书问题。企业网络做中间人代理时常见。
     Tls(String),
-    /// 其它 Win32 错误。
+    /// 其它错误。
     Other(String),
 }
 
@@ -82,21 +126,7 @@ impl std::fmt::Display for HttpError {
 ///
 /// ★ 这个函数是**阻塞**的，必须在 `spawn_blocking` 里调。
 ///
-/// ★★ 实现选择：**Windows 上走系统自带 `curl.exe` 子进程**，不用 WinHTTP。
-///
-///   为什么（真实踩坑记录，2026-09）：
-///   这台机器上 WinHTTP 对任何 HTTPS 请求的 `WinHttpSendRequest` 都返回
-///   ERROR_INVALID_PARAMETER(87) —— 明文/裸 WINHTTP 调用复现、代理无关、
-///   header 无关。同机 `curl.exe https://example.com/` 却一直 200。
-///   排查指向**安全软件（火绒之类）钩挂了 WinHTTP.dll** 的发送路径。
-///
-///   所以改用系统自带的 curl（Windows 10 1803+ 必带，走 schannel 的
-///   独立网络栈，不经过被钩的 WinHTTP）。代价是 spawn 一个子进程，
-///   对本功能（几秒一次、额度查询）可忽略。
-///
-///   为规避「子进程管道输出」的沙箱/环境限制，**结果全部走临时文件**
-///   （`-o` 写响应体、`-D` 写响应头）而不是捕获子进程 stdout ——
-///   进程只等待退出，不产生任何管道。
+/// ★★ 实现：Windows 上走系统 **WinHTTP**（无子进程 —— 不会闪黑窗）。
 pub fn get(
     url: &str,
     headers: &[(&str, &str)],
@@ -169,15 +199,12 @@ pub(crate) fn parse_url(url: &str) -> Result<UrlParts, HttpError> {
     // 真支持反而要写一堆括号解析，不如让它在主机名校验处失败并说清楚。
     let (host, port) = match authority.rsplit_once(':') {
         Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => {
-            let parsed = p.parse::<u16>().map_err(|_| {
-                HttpError::Other(format!("端口不是合法数字：{p}"))
-            })?;
+            let parsed = p
+                .parse::<u16>()
+                .map_err(|_| HttpError::Other(format!("端口不是合法数字：{p}")))?;
             (h.to_string(), parsed)
         }
-        _ => (
-            authority.to_string(),
-            if secure { 443 } else { 80 },
-        ),
+        _ => (authority.to_string(), if secure { 443 } else { 80 }),
     };
     if host.is_empty() {
         return Err(HttpError::Other(format!("接口地址缺少主机名：{url}")));
@@ -192,13 +219,14 @@ pub(crate) fn parse_url(url: &str) -> Result<UrlParts, HttpError> {
 }
 
 // ===========================================================================
-// Windows：系统 curl 子进程实现（绕过被安全软件钩住的 WinHTTP）
+// Windows：WinHTTP 原生实现（无子进程）
 // ===========================================================================
 #[cfg(windows)]
 mod imp {
     use super::{HttpError, HttpResponse, parse_url};
-    use std::process::{Command, Stdio};
     use std::time::Duration;
+    use windows::Win32::Networking::WinHttp::*;
+    use windows::core::PCWSTR;
 
     /// 值净化：防 header 注入，且把用户从网页复制的 Key 里可能带的
     /// CR/LF 替换成空格（换行会破坏 header 结构）。
@@ -208,101 +236,222 @@ mod imp {
             .collect()
     }
 
+    /// Rust 字符串 → NUL 结尾的宽字符串。
+    ///
+    /// ★ **只用于 `Param<PCWSTR>` 参数**（verb / host / path / agent 这类）。
+    ///   `WinHttpSendRequest` 的头部参数不是 PCWSTR，而是一个「长度即语义」的
+    ///   slice —— 用它就会多算 1 个字符（NUL）并把请求打成 87。头部走
+    ///   `header_block()`。
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    /// 把 `("Name", "Value")` 列表合成 WinHTTP 的头部块。
+    ///
+    /// 产出**不含结尾 NUL**：windows crate 把 `slice.len()` 原样当
+    /// `dwHeadersLength` 传给 `WinHttpSendRequest`，多一个 NUL 就是
+    /// `ERROR_INVALID_PARAMETER(87)`。
+    ///
+    /// 每条头以 CRLF 结束（WinHTTP 要求；同一块里给多条头也是这个格式）。
+    /// 名称与值都过 `clean()` —— 用户从网页复制 Key 时常带上换行，
+    /// 而换行会破坏头部结构（Header Injection）。
+    pub(super) fn header_block(headers: &[(&str, &str)]) -> Vec<u16> {
+        let mut out: Vec<u16> = Vec::new();
+        for (k, v) in headers {
+            out.extend(clean(k).encode_utf16());
+            out.extend(": ".encode_utf16());
+            out.extend(clean(v).encode_utf16());
+            out.extend("\r\n".encode_utf16());
+        }
+        out
+    }
+
+    /// `HINTERNET` 的 RAII 包装。
+    ///
+    /// ★ 必须包装：WinHTTP 有 4 个句柄要关（session / connect / request），
+    ///   而中间任何一步都可能提前 return —— 手写 close 迟早漏一个，
+    ///   漏掉就是句柄泄漏，长期常驻的后台刷新会慢慢累积。
+    struct Handle(*mut core::ffi::c_void);
+
+    impl Handle {
+        fn new(ptr: *mut core::ffi::c_void, what: &str) -> Result<Self, HttpError> {
+            if ptr.is_null() {
+                return Err(classify(last_error_code(), what));
+            }
+            Ok(Handle(ptr))
+        }
+
+        fn raw(&self) -> *mut core::ffi::c_void {
+            self.0
+        }
+    }
+
+    impl Drop for Handle {
+        fn drop(&mut self) {
+            // SAFETY: 句柄非空且由 WinHttp* 创建；只关一次。
+            let _ = unsafe { WinHttpCloseHandle(self.0) };
+        }
+    }
+
+    /// 取最近一次 Win32 错误码（`Handle::new` 里失败时用）。
+    fn last_error_code() -> u32 {
+        unsafe { windows::Win32::Foundation::GetLastError().0 }
+    }
+
+    /// WinHTTP 错误码 → 产品语义。
+    ///
+    /// ★ 注意 windows crate 的 `.ok()` 把失败包成 `HRESULT_FROM_WIN32(err)`，
+    ///   也就是 `0x8007xxxx`。直接拿 `e.code().0` 比较会永远不匹配，
+    ///   必须**取低 16 位**还原成 Win32 错误码。
+    pub(super) fn classify(code: u32, context: &str) -> HttpError {
+        let code = code & 0xFFFF;
+        match code {
+            12007 | 12029 | 12030 | 12031 => {
+                HttpError::Unreachable(format!("{context}，WinHTTP 错误 {code}"))
+            }
+            12002 | 12017 | 12028 => {
+                HttpError::Timeout(format!("{context}，WinHTTP 错误 {code}"))
+            }
+            12157 | 12169 | 12175 | 12179 => {
+                HttpError::Tls(format!("{context}，WinHTTP 错误 {code}"))
+            }
+            _ => HttpError::Other(format!("{context}（WinHTTP 错误 {code}）")),
+        }
+    }
+
+    /// 把 `windows_core::Error` 的 HRESULT 还原成 Win32 码后分类。
+    fn classify_err(e: &windows::core::Error, context: &str) -> HttpError {
+        classify(e.code().0 as u32, context)
+    }
+
     pub(super) fn get(
         url: &str,
         headers: &[(&str, &str)],
         timeout: Duration,
     ) -> Result<HttpResponse, HttpError> {
         let parts = parse_url(url)?;
+        let seconds = |d: Duration| (d.as_secs().min(i32::MAX as u64)) as i32;
+        let total = seconds(timeout).max(5);
 
-        // 结果全部走临时文件（-o 响应体、-D 响应头），不捕获子进程
-        // stdout —— 避免任何管道/输出捕获的坑，也便于超时清理。
-        let stamp = format!(
-            "{:x}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        );
-        let dir = std::env::temp_dir();
-        let body_path = dir.join(format!("pt_body_{stamp}.txt"));
-        let hdr_path = dir.join(format!("pt_hdr_{stamp}.txt"));
+        // SAFETY: 所有句柄经 Handle 包装，作用域结束逐个关闭。
+        unsafe {
+            // ① 会话。AUTOMATIC_PROXY = 跟随系统/IE 代理设置（Win8.1+），
+            //    这也是"用户在系统里配了代理，这里自动生效"的实现方式。
+            let agent = wide("PrisTimer/0.4");
+            let session = Handle::new(
+                WinHttpOpen(
+                    PCWSTR(agent.as_ptr()),
+                    WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                    PCWSTR::null(),
+                    PCWSTR::null(),
+                    0,
+                ),
+                "WinHttpOpen",
+            )?;
 
-        let mut cmd = Command::new("curl.exe");
-        cmd.arg("-sS") // 静默 + 出错时把错误写进 stderr
-            .arg("-L") // 跟随重定向（额度接口常有 CDN 跳转）
-            .arg("--connect-timeout")
-            .arg(timeout.as_secs().saturating_div(2).max(3).to_string())
-            .arg("-m")
-            .arg(timeout.as_secs().to_string())
-            .arg("-o")
-            .arg(&body_path)
-            .arg("-D")
-            .arg(&hdr_path);
-        for (k, v) in headers {
-            cmd.arg("-H").arg(format!("{}: {}", clean(k), clean(v)));
-        }
-        cmd.arg(format!(
-            "{}://{}:{}{}",
-            if parts.secure { "https" } else { "http" },
-            parts.host,
-            parts.port,
-            parts.path
-        ));
+            // ② 超时。connect 取总量的一半（至少 3s），避免慢网被过早掐断；
+            //    receive 用总量（服务器思考时间算在这里）。
+            let connect = (total / 2).max(3);
+            let _ = WinHttpSetTimeouts(session.raw(), connect, connect, connect, total);
 
-        // 不捕获输出：stdin/stdout/stderr 全部丢弃，只等退出码。
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            // ③ 连接（DNS + TCP，HTTPS 的 TLS 握手在 SendRequest 时发生）。
+            let host = wide(&parts.host);
+            let conn = Handle::new(
+                WinHttpConnect(session.raw(), PCWSTR(host.as_ptr()), parts.port, 0),
+                "WinHttpConnect",
+            )?;
 
-        let status = cmd.status().map_err(|e| {
-            HttpError::Other(format!(
-                "无法启动系统 curl.exe（Windows 10 1803+ 自带）：{e}"
-            ))
-        })?;
-
-        // 先读产物，再清理临时文件（读失败也继续——结果可能为空）。
-        let hdr = std::fs::read(&hdr_path).unwrap_or_default();
-        let body = std::fs::read(&body_path).unwrap_or_default();
-        let _ = std::fs::remove_file(&body_path);
-        let _ = std::fs::remove_file(&hdr_path);
-
-        // 退出码分类：curl 的 6/7 连不上、28 超时、35/51/58/60 TLS。
-        if !status.success() {
-            let code = status.code().unwrap_or(-1);
-            return Err(match code {
-                6 | 7 => HttpError::Unreachable(format!("curl 无法连接（错误 {code}）")),
-                28 => HttpError::Timeout("curl 请求超时".to_string()),
-                35 | 51 | 58 | 60 | 90 => {
-                    HttpError::Tls(format!("curl TLS 校验失败（错误 {code}）"))
-                }
-                _ => HttpError::Other(format!("curl 请求失败（退出码 {code}）")),
-            });
-        }
-
-        Ok(HttpResponse {
-            status: status_code_from_header(&hdr).unwrap_or(0),
-            body: String::from_utf8_lossy(&body).into_owned(),
-        })
-    }
-
-    /// 从 curl -D 导出的响应头里取 HTTP 状态码。
-    ///
-    /// 响应头文件第一行形如 `HTTP/1.1 200 OK` 或 `HTTP/2 200`。
-    fn status_code_from_header(hdr: &[u8]) -> Option<u16> {
-        let text = String::from_utf8_lossy(hdr);
-        for line in text.lines() {
-            let line = line.trim();
-            let Some(rest) = line.strip_prefix("HTTP/") else {
-                continue;
+            // ④ 请求对象。
+            let verb = wide("GET");
+            let path = wide(&parts.path);
+            let flags = if parts.secure {
+                WINHTTP_FLAG_SECURE
+            } else {
+                WINHTTP_OPEN_REQUEST_FLAGS(0)
             };
-            let mut it = rest.split_whitespace();
-            it.next(); // 协议版本
-            if let Some(code) = it.next() {
-                return code.strip_suffix('\r').unwrap_or(code).parse().ok();
+            let req = Handle::new(
+                WinHttpOpenRequest(
+                    conn.raw(),
+                    PCWSTR(verb.as_ptr()),
+                    PCWSTR(path.as_ptr()),
+                    PCWSTR::null(),
+                    PCWSTR::null(),
+                    std::ptr::null(),
+                    flags,
+                ),
+                "WinHttpOpenRequest",
+            )?;
+
+            // ⑤ 跟随重定向（等价于 curl -L）。额度接口常挂在 CDN 上，
+            //    不跟随会拿到 301/302 的空 body，表现为"解析失败"。
+            let policy: u32 = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
+            let _ = WinHttpSetOption(
+                Some(req.raw() as *const core::ffi::c_void),
+                WINHTTP_OPTION_REDIRECT_POLICY,
+                Some(&policy.to_ne_bytes()),
+            );
+
+            // ⑥ 请求头合成一整块（WinHttpSendRequest 只接受一整块）。
+            //
+            // ★★ 这里**不能**用 `wide()`：那个函数会补 NUL，而 windows
+            //   crate 把整个 slice 的长度直接当作 `dwHeadersLength`，
+            //   多出的 NUL 会被 WinHTTP 判为非法字符 → ERROR_INVALID_PARAMETER(87)。
+            //   头部块因此单独构造，见 `header_block()`。
+            let block = header_block(headers);
+            let block_ref = if block.is_empty() {
+                None
+            } else {
+                Some(block.as_slice())
+            };
+
+            WinHttpSendRequest(req.raw(), block_ref, None, 0, 0, 0)
+                .map_err(|e| classify_err(&e, "WinHttpSendRequest"))?;
+
+            WinHttpReceiveResponse(req.raw(), std::ptr::null_mut())
+                .map_err(|e| classify_err(&e, "WinHttpReceiveResponse"))?;
+
+            // ⑦ 状态码。
+            let mut status: u32 = 0;
+            let mut len = std::mem::size_of::<u32>() as u32;
+            WinHttpQueryHeaders(
+                req.raw(),
+                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                PCWSTR::null(),
+                Some(&mut status as *mut u32 as *mut core::ffi::c_void),
+                &mut len,
+                std::ptr::null_mut(),
+            )
+            .map_err(|e| classify_err(&e, "WinHttpQueryHeaders"))?;
+
+            // ⑧ 读 body。循环到 avail == 0（读尽）；单次读失败就收下已读到
+            //    的部分 —— 半个 JSON 也好过一句"查询失败"，上层解析失败时
+            //    至少能把原文显示给用户。
+            let mut body: Vec<u8> = Vec::new();
+            loop {
+                let mut avail: u32 = 0;
+                if WinHttpQueryDataAvailable(req.raw(), &mut avail).is_err() || avail == 0 {
+                    break;
+                }
+                let mut buf = vec![0u8; avail as usize];
+                let mut read: u32 = 0;
+                if WinHttpReadData(
+                    req.raw(),
+                    buf.as_mut_ptr() as *mut core::ffi::c_void,
+                    avail,
+                    &mut read,
+                )
+                .is_err()
+                {
+                    break;
+                }
+                body.extend_from_slice(&buf[..read as usize]);
             }
+
+            Ok(HttpResponse {
+                status: status as u16,
+                body: String::from_utf8_lossy(&body).into_owned(),
+            })
         }
-        None
     }
 }
 
@@ -366,5 +515,78 @@ mod tests {
         let parts = parse_url("https://example.com:abc/x").unwrap();
         assert_eq!(parts.host, "example.com:abc");
         assert_eq!(parts.port, 443);
+    }
+
+    /// HRESULT 低 16 位才是 Win32 错误码 —— 分类函数必须按这个还原，
+    /// 否则 12007/12029 永远不会被识别成"连不上"。
+    #[cfg(windows)]
+    #[test]
+    fn classifies_hresult_wrapped_win32_codes() {
+        // 0x80072EE5 = HRESULT_FROM_WIN32(12005) 非法 URL
+        // 0x80072EFD = HRESULT_FROM_WIN32(12029) 无法连接
+        assert!(matches!(imp::classify(0x8007_2EE5, "t"), HttpError::Other(_)));
+        assert!(matches!(
+            imp::classify(0x8007_2EFD, "t"),
+            HttpError::Unreachable(_)
+        ));
+        assert!(matches!(
+            imp::classify(0x8007_2F02, "t"), // 12034? 未列出的码
+            HttpError::Other(_)
+        ));
+        // 裸码也要能识别（Handle::new 走的是 GetLastError 直传）
+        assert!(matches!(
+            imp::classify(12002, "t"),
+            HttpError::Timeout(_)
+        ));
+    }
+
+    /// ★★ 回归测试：头部块**绝不能**含 NUL。
+    ///
+    /// windows crate 把 `WinHttpSendRequest` 的头部参数声明为
+    /// `Option<&[u16]>`，内部把 `slice.len()` 直接当 `dwHeadersLength`。
+    /// 一旦沿用会给 Win32 字符串补 NUL 的 `wide()`，长度就多 1，
+    /// WinHTTP 判定头部块含非法字符并返回 `ERROR_INVALID_PARAMETER(87)` ——
+    /// 症状是"额度查询永远网络错误"，而**不带头的请求却完全正常**
+    /// （当年正是这个不对称让人误判成"本机 WinHTTP 坏了"）。
+    #[cfg(windows)]
+    #[test]
+    fn header_block_must_not_contain_nul() {
+        let block = imp::header_block(&[("Authorization", "Bearer oc_sk_abc")]);
+        assert!(
+            !block.contains(&0),
+            "头部块含 NUL —— WinHttpSendRequest 会返回错误 87"
+        );
+        // 长度必须等于实际字符数（含 CRLF），一个不多一个不少
+        assert_eq!(block.len(), "Authorization: Bearer oc_sk_abc\r\n".encode_utf16().count());
+    }
+
+    /// 无头时返回空块 —— 调用方据此传 `None`（WinHTTP 的
+    /// "WINHTTP_NO_ADDITIONAL_HEADERS" 语义），而不是一个空 buffer。
+    #[cfg(windows)]
+    #[test]
+    fn header_block_is_empty_without_headers() {
+        assert!(imp::header_block(&[]).is_empty());
+    }
+
+    /// 每条头必须以 CRLF 结束，否则 WinHTTP 找不到头部边界。
+    #[cfg(windows)]
+    #[test]
+    fn header_block_terminates_each_line_with_crlf() {
+        let block = imp::header_block(&[("A", "1"), ("B", "2")]);
+        assert_eq!(&block[block.len() - 2..], &[13, 10]);
+        let text = String::from_utf16(&block).unwrap();
+        assert_eq!(text, "A: 1\r\nB: 2\r\n");
+    }
+
+    /// 值里混进换行（网页复制 Key 的常见附带物）必须被净化，
+    /// 否则会注入出伪造的头部。
+    #[cfg(windows)]
+    #[test]
+    fn header_block_sanitizes_crlf_injection() {
+        let block = imp::header_block(&[("Authorization", "Bearer x\r\nX-Evil: 1")]);
+        let text = String::from_utf16(&block).unwrap();
+        assert_eq!(text, "Authorization: Bearer x  X-Evil: 1\r\n");
+        // 整块只应有一个 CRLF —— 就是结尾那一个
+        assert_eq!(text.matches("\r\n").count(), 1);
     }
 }

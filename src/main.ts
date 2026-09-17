@@ -2,6 +2,7 @@ import { createApp } from "vue";
 import "./styles/glass.css";
 import App from "./App.vue";
 import OverlayPanel from "./components/OverlayPanel.vue";
+import { syncTheme } from "./composables/useTheme";
 
 // ---------------------------------------------------------------------------
 // 启动占位清理。
@@ -47,6 +48,17 @@ if (isOverlay) {
   // 窗口是 `transparent: true` 的 —— 必须让页面背景透明，
   // 否则 <html> 上那层渐变底色会把整窗糊成不透明。
   document.documentElement.classList.add("overlay-mode");
+
+  // ★ 主题必须在这里**主动**应用（2026-09-17 修）。
+  //   主题的 data-theme 属性平时由 App.vue 里的 useTheme() 写入，
+  //   而浮窗走的是 `createApp(OverlayPanel)` —— **根本不经 App.vue**，
+  //   于是 data-theme 永远缺失，所有主题变量都落回 :root 的默认值（深空）。
+  //   症状：主窗口切到晨雾/纸墨等浅色主题后，浮窗仍是深色玻璃配浅色文字，
+  //   两个界面的玻璃底色、文字色、进度条槽色全对不上（实测
+  //   --glass-bg-deep 取到 rgb(10 13 18 / .44) 而非浅色主题的 rgb(28 40 60 / .1)）。
+  //   syncTheme() 是纯读单例 + 写属性，重复调用安全。
+  syncTheme();
+
   createApp(OverlayPanel).mount("#app");
   clearBoot();
 } else {

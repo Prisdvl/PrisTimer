@@ -225,24 +225,41 @@ mod win {
     /// 电池电量特征（Battery Level, 0x2A19）。值是一个 u8 百分比。
     const BAS_LEVEL_CHAR: GUID = GUID::from_u128(0x00002A19_0000_1000_8000_00805F9B34FB);
 
-    /// 电池服务设备在 PnP 实例 ID 里的标识：`BTHLEDevice#{0000180f-...}`。
+    /// 设备属性：蓝牙设备的电量百分比（`DEVPKEY_Bluetooth_Battery`）。
     ///
-    /// Windows 为每个实现 BAS(0x180F) 的设备单独建一个 PnP 服务节点，
-    /// 它的 ID 一定含这段。用它做字符串过滤，把"电池服务节点"从
-    /// 上千个设备节点里挑出来。
+    /// ★★ 这里的字面量必须是**实测值**，不能凭印象写。历史版本写的是
+    ///    `"{104EA319-6EE2-47D1-BDDB-47A8CA63B19C},10"` —— GUID 后三段错、
+    ///    PID 错（10 vs 2）、分隔符也错（`,` vs 空格），于是这个查询
+    ///    **永远命中不了**。症状就是：耳机在 Windows 设置里明明有电量，
+    ///    我们却显示「未知」；而日志里那句"经典蓝牙设备无可用电量元数据"
+    ///    看起来像是设备不上报，实际是我们查错了键。
     ///
-    /// ★ 分隔符是 `#`（不是 `\`）—— 实测的实例 ID 长这样：
-    /// `\\?\BTHLEDevice#{0000180f-...}_Dev_...`。写成 `\` 会一个都匹配不上。
-    const BAS_SERVICE_TAG: &str = "BTHLEDevice#{0000180f-0000-1000-8000-00805f9b34fb}";
-
-    /// PnP 属性：音频设备的电量百分比。
+    /// 实测的正确形态（Windows 11 22621，`Get-PnpDeviceProperty` 输出的
+    /// 原始键名）：
     ///
-    /// 格式是 `{属性集 GUID},{PID}`。键本身是 UTF-16 串。
-    /// 只有**音频类**设备（`is_audio`）的这个值才是真正的百分比，
-    /// 非音频设备上它可能是电量计的原始计数（比如 3000 = 3.0V），
-    /// 直接当百分比会显示出 "3000%" 这种荒唐值 —— 所以下面必须卡 0..=100。
+    /// ```text
+    /// {104EA319-6EE2-4701-BD47-8DDBF425BBE5} 2 = 70     ← 电量百分比
+    /// {104EA319-6EE2-4701-BD47-8DDBF425BBE5} 3 = False  ← 是否在充电
+    /// ```
+    ///
+    /// 即 PID 2 是电量、PID 3 是充电标志；键的字符串形式是
+    /// `{GUID} PID`（**空格分隔**，不是逗号）。
+    ///
+    /// ★ 另一个同样重要的实测结论：**这个属性只出现在部分节点上**，
+    ///   不能只查顶层设备节点。本机实测（2026-09-17）：
+    ///
+    /// | 设备 | 属性所在节点 | 值 |
+    /// |---|---|---|
+    /// | AULA-F87Pro 5.0 | `BTHLE\DEV_<mac>`（顶层） | 56 |
+    /// | ATK A9 Nearlink | `BTHLE\DEV_<mac>`（顶层） | 35 |
+    /// | AULA-SC580SE | `BTHLE\DEV_<mac>`（顶层） | 40 / 57 |
+    /// | **EDIFIER MT6（耳机）** | **`BTHENUM\{0000111e}..._HCIBYPASS`（HFP 子节点）** | **70** |
+    ///
+    ///   耳机的电量挂在免手持（HFP）功能子节点上，顶层节点没有 ——
+    ///   所以取电量的正确姿势是「扫描所有节点、按 MAC 归一」，
+    ///   见 `build_battery_index`。
     const DEVPKEY_BLUETOOTH_BATTERY: &str =
-        "{104EA319-6EE2-47D1-BDDB-47A8CA63B19C},10";
+        "{104EA319-6EE2-4701-BD47-8DDBF425BBE5} 2";
 
     /// 音频设备的 Major Device Class 常量来自 WinRT 的
     /// `BluetoothMajorClass` 枚举。单独 `use` 进来是因为只在
@@ -373,7 +390,6 @@ mod win {
 
         let started = Instant::now();
         let mut devices: Vec<BtDevice> = Vec::new();
-        let mut used_batteries: std::collections::HashSet<u64> = std::collections::HashSet::new();
 
         for info in found {
             // 预算用尽就收工 —— 返回已查到的部分，别让后台任务无限挂着。
@@ -381,7 +397,7 @@ mod win {
                 crate::log::log("蓝牙扫描超出时间预算，返回部分结果");
                 break;
             }
-            match read_one(&info, started, &battery_index, &mut used_batteries) {
+            match read_one(&info, started, &battery_index) {
                 Some(device) => devices.push(device),
                 // 单个设备失败不该毁掉整次扫描：换下一个。
                 None => continue,
@@ -396,21 +412,20 @@ mod win {
             devices.push(device);
         }
 
-        // ③.5 补漏：**有电池数据的设备一定要出现在列表里**。
+        // ③.5（已删除）「只要读到电量就展示」的补漏通道。
         //
-        // ★ 为什么需要这一步（本机实测的痛点）：
+        // 历史：这一步曾把电池索引里所有"有电量"的设备回填进列表，理由是
+        // BLE 鼠标键盘休眠时 `ConnectionStatus` 会报 Disconnected，严格过滤
+        // 会让它们集体消失。
         //
-        //   `GetDeviceSelectorFromConnectionStatus(Connected)` 只返回
-        //   "当前被 Windows 判定为已连接"的设备。而 BLE 鼠标/键盘这类
-        //   低功耗外设大部分时间处于休眠，系统并不把它们算作 Connected ——
-        //   实测这个选择器**一台都没返回**（只有音频设备正在播放时才出现）。
+        // ★ 但它的副作用用户一眼就看见了：**已经断开、早就不用的设备
+        //   仍然带着上次读到的电量挂在状态栏上**（Windows 不会在设备断开时
+        //   立刻清理电量缓存，而状态栏是每天都看的东西，这个错最刺眼）。
         //
-        //   但它们的电量明明是可读的（Windows 有电池服务节点）。用户看到
-        //   "无已连接设备"却能在系统设置里看到鼠标有电，会认为是我们坏了。
-        //
-        //   所以这一步用**电池索引里的设备名**回填：索引里有电量的设备，
-        //   说明它确实存在且被系统识别过，就应该展示出来。
-        append_battery_only_devices(&mut devices, &battery_index, &used_batteries);
+        // 产品决策（2026-09-17，用户确认）：**只显示当前真正连接的设备**，
+        // 宁可少显示 —— 休眠的鼠标键盘一起消失是可接受的代价。
+        // 于是这一步整段删除：电量索引从此只用来「给已连接的设备查电量」，
+        // 不再参与「谁该出现在列表里」的判断。
 
         // ④ 排序：有名在前、电量高的在前。
         //    稳定的顺序很重要 —— 否则每次刷新列表都在跳，用户会以为
@@ -462,158 +477,99 @@ mod win {
 
     /// 建立「设备 MAC → 电量」索引。
     ///
-    /// ★ 这是本项目电量功能**真正的主力通路**（见 `scan_inner` 里 ② 的说明）。
+    /// ★ 这是电量功能的**唯一主力通路**：一次性把系统里所有带电量属性的
+    ///   设备节点扫出来，按 MAC 建表，后面每台设备查表即可。
     ///
-    /// 原理：Windows 为每个实现 BAS(0x180F) 的蓝牙设备创建一个独立的
-    /// PnP 服务节点，实例 ID 形如（注意分隔符是 `#`，不是 `\`）：
+    /// 数据源是 `DEVPKEY_Bluetooth_Battery`（`{104EA319-…} 2`）——
+    /// **Windows 设置页显示的蓝牙电量读的也是它**。它的分布很不均匀，
+    /// 本机实测（2026-09-17）：
     ///
-    /// ```text
-    /// \\?\BTHLEDevice#{0000180f-...}#8&36409825&0&000e#{6e3bb679-4372-40c8-9eaa-4509df260cd8}
-    ///                  ^^^^ 电池服务 UUID                    ^^^^ 设备接口 GUID
-    ///                                                        ^^^^^^^^^^^^^^^^ MAC 在中间那段
-    /// ```
+    /// | 设备 | 属性所在节点 | 值 |
+    /// |---|---|---|
+    /// | AULA-F87Pro 5.0 | `BTHLE\DEV_<mac>`（顶层） | 56 |
+    /// | ATK A9 Nearlink | `BTHLE\DEV_<mac>`（顶层） | 35 |
+    /// | AULA-SC580SE | `BTHLE\DEV_<mac>`（顶层） | 40 / 57 |
+    /// | EDIFIER MT6（耳机） | `BTHENUM\{0000111e}…_HCIBYPASS`（HFP 子节点） | 70 |
     ///
-    /// ★★ 本机实测（2026-09）总结出的三条关键事实，缺一不可：
+    /// 所以**必须扫全部设备节点**（`DeviceInformationKind::Device`），
+    /// 不能只看顶层设备 —— 只看顶层会漏掉所有耳机，这正是「耳机在系统
+    /// 设置里有电、我们却显示未知」的根因。
     ///
-    ///   1. **必须用空选择器**（`FindAllAsync()`）。
-    ///      `System.Devices.ClassGuid:="{蓝牙类}"` 返回 **0 个**节点
-    ///      （服务节点的 ClassGuid 不是蓝牙类），带 `Present:=...`
-    ///      会直接报 `Full text search is not supported`。
-    ///      代价是全量枚举约 1000+ 节点，但纯本地、几十毫秒，可接受。
+    /// 属性必须**显式请求**：`Properties()` 默认只带回 Name/Id 这类基础
+    /// 字段，不请求就永远 `Lookup` 不到（而且失败得很安静）。
     ///
-    ///   2. **同一台设备会出现两条服务节点**，尾部接口 GUID 不同。
-    ///      一条（`{6e3bb679-...}`）能读出电量，另一条（`{0000180f-...}`）
-    ///      的 `FromIdAsync` 返回假的"成功"但对象为空。
-    ///      所以**两条都要试**，取先成功的那条 —— 只认一条会漏掉
-    ///      一半设备（实测 `ATK A9 Nearlink` 的可用节点就是前者）。
-    ///
-    ///   3. 电量值是 **u8 百分比**，读出来直接用（实测 35% / 56% / 57%）。
-    ///
-    /// 失败一律静默跳过 —— 电量为可选信息，读不到就是 `null`（需求要求）。
-    ///
-    /// 值是 `(电量百分比, 设备名)`：名字取自电池服务节点自带的 `Name()`，
-    /// 用于 ③.5 补漏时展示那些枚举不到的设备。
-    ///
-    /// ★★ 一个重要的实现口径：**不按 `ConnectionStatus` 过滤**。
-    ///
-    ///      实测（本机 2026-09）发现 BLE HID 设备（鼠标键盘）在低功耗
-    ///      休眠时，Windows 会把 `ConnectionStatus` 报为 `Disconnected`，
-    ///      但 BAS 服务节点依然存在、电量依然可读 —— 系统设置页也正是
-    ///      这样显示电量的。按 ConnectionStatus 过滤会把"正在用的
-    ///      鼠标键盘"全部当成离线，一个都不显示（第一版这么干过）。
-    ///
-    ///      所以这里的判据就是「**电量真的读出来了**」：能读出 = 系统
-    ///      还有这个设备的有效电量缓存 = 值得展示。读不出的历史残留
-    ///      节点自然被跳过。
+    /// 读不到一律静默跳过 —— 电量为可选信息，读不到就是 `None`。
     fn build_battery_index() -> std::collections::HashMap<u64, (u8, String)> {
-        use windows::Devices::Bluetooth::GenericAttributeProfile::GattDeviceService;
+        use windows::Devices::Enumeration::DeviceInformationKind;
+        // ★ `IIterable` 在 windows-collections crate 里（windows 没 re-export）。
+        use windows_collections::IIterable;
 
         let mut index = std::collections::HashMap::new();
 
-        // 事实 ①：空选择器。别改成 ClassGuid 过滤，那会一个都拿不到。
-        let Ok(list) = DeviceInformation::FindAllAsync().and_then(|op| op.get()) else {
+        // ★ 必须显式请求这个属性。
+        //
+        //   `DeviceInformation.Properties` 默认只带回一小撮基础属性
+        //   （Name / Id / IsEnabled…），**不含** DEVPKEY_Bluetooth_Battery。
+        //   不在这里声明，后面 `Properties().Lookup()` 会一律失败 ——
+        //   而且失败得很安静（`ok()?` 直接变 None），看起来就像
+        //   "这台设备没上报电量"。
+        let wanted: IIterable<HSTRING> = vec![HSTRING::from(DEVPKEY_BLUETOOTH_BATTERY)].into();
+
+        // ★ 空 AQS + Device kind = 系统里的**全部设备节点**。
+        //
+        //   为什么必须扫全部节点而不是只看顶层设备：
+        //   耳机的电量挂在 `BTHENUM\{0000111e}..._HCIBYPASS`（免手持功能
+        //   子节点）上，顶层设备节点根本没有这个属性（实测，见常量处的表）。
+        //
+        //   代价是全量枚举（本机数千个节点）。相比原来"逐个 BAS 服务节点
+        //   开 GATT 读取"（每台 100–500ms，实测 10 个候选），
+        //   读属性是纯内存操作，**整体反而快得多**。
+        let Ok(list) = DeviceInformation::FindAllAsyncWithKindAqsFilterAndAdditionalProperties(
+            &HSTRING::from(""),
+            &wanted,
+            DeviceInformationKind::Device,
+        )
+        .and_then(|op| op.get())
+        else {
             crate::log::log("电量索引：设备全量枚举失败");
             return index;
         };
 
-        let mut candidates = 0usize;
+        let mut scanned = 0usize;
         for info in list {
             let Ok(id) = info.Id().map(|i| i.to_string()) else {
                 continue;
             };
-            if !id.contains(BAS_SERVICE_TAG) {
-                continue;
-            }
+            // 没有 MAC 的节点（系统合成设备、容器节点等）不是蓝牙外设。
             let Some(mac) = extract_mac(&id) else {
                 continue;
             };
-            candidates += 1;
+            scanned += 1;
 
-            // 事实 ②：同 MAC 可能已有值（另一条接口 GUID 的节点先成功）。
-            // 已经拿到就不再折腾 —— 电量是同源的。
+            // 同一 MAC 可能有多个节点带电量（BAS 节点 + HFP 节点 + 顶层），
+            // 谁先读到用谁 —— 它们是同源数据（都来自蓝牙栈）。
             if index.contains_key(&mac) {
                 continue;
             }
 
-            if let Ok(service) =
-                GattDeviceService::FromIdAsync(&HSTRING::from(id.as_str())).and_then(|op| op.get())
-            {
-                if let Some(level) = read_battery_from_service(&service) {
-                    // 顺便把服务节点上带的设备名记下来 —— 用于 ③.5 补漏
-                    // （枚举不到 Connected 设备时，至少还能靠名字展示）。
-                    let name = info.Name().map(|n| n.to_string()).unwrap_or_default();
-                    index.insert(mac, (level, name));
-                }
-            }
+            let Some(level) = info
+                .Properties()
+                .ok()
+                .and_then(|p| p.Lookup(&HSTRING::from(DEVPKEY_BLUETOOTH_BATTERY)).ok())
+                .and_then(coerce_battery)
+            else {
+                continue;
+            };
+
+            let name = info.Name().map(|n| n.to_string()).unwrap_or_default();
+            index.insert(mac, (level, name));
         }
+
         crate::log::log(format!(
-            "电量索引：候选 {candidates} 个，成功读出 {} 个",
+            "电量索引：扫描 {scanned} 个节点，读出 {} 个",
             index.len()
         ));
         index
-    }
-
-    /// 把"有电量但没被设备枚举列出来"的设备补进列表。
-    ///
-    /// 名字取自电池服务节点自带的 `Name()` —— 实测它就是设备名
-    /// （`ATK A9 Nearlink` / `AULA-F87Pro 5.0`），可以直接展示。
-    ///
-    /// 类型判定：能在电池服务节点上读到 BAS 的，一定是 BLE 设备，
-    /// 所以统一标 `Ble`（不会误标成经典）。
-    fn append_battery_only_devices(
-        devices: &mut Vec<BtDevice>,
-        index: &std::collections::HashMap<u64, (u8, String)>,
-        used: &std::collections::HashSet<u64>,
-    ) {
-        for (mac, (level, name)) in index {
-            // 已经通过设备枚举列出来的（used 里记录过）就跳过。
-            if used.contains(mac) {
-                continue;
-            }
-            // 名字为空说明节点没带名称 —— 这种情况下加进去只会显示
-            // "未知设备"，反而干扰，不如不加。
-            if name.trim().is_empty() {
-                continue;
-            }
-            devices.push(BtDevice {
-                id: format!("battery-node:{mac:012x}"),
-                name: name.clone(),
-                kind: DeviceKind::Ble,
-                battery_percent: Some(*level),
-                battery_source: super::super::BatterySource::BleBas,
-                // 靠电池节点补进来的设备拿不到 ClassOfDevice，
-                // 音频判定保守取 false（避免误用不可信的 PnP 兜底电量）。
-                is_audio: false,
-            });
-        }
-    }
-
-    /// 从一个已打开的 GATT 服务对象上读 Battery Level 特征值。
-    ///
-    /// 与 `read_ble_battery` 的区别：后者从 `BluetoothLEDevice` 出发
-    /// （父设备 → 找 BAS 服务），这里直接给的是 BAS 服务本身。
-    fn read_battery_from_service(service: &GattDeviceService) -> Option<u8> {
-        let chars = service
-            .GetCharacteristicsForUuidAsync(BAS_LEVEL_CHAR)
-            .ok()?
-            .get()
-            .ok()?;
-        if chars.Status().ok()? != GattCommunicationStatus::Success {
-            return None;
-        }
-        let characteristic = chars.Characteristics().ok()?.into_iter().next()?;
-        let read = characteristic.ReadValueAsync().ok()?.get().ok()?;
-        if read.Status().ok()? != GattCommunicationStatus::Success {
-            return None;
-        }
-        let buffer = read.Value().ok()?;
-
-        let reader = windows::Storage::Streams::DataReader::FromBuffer(&buffer).ok()?;
-        if reader.UnconsumedBufferLength().ok()? < 1 {
-            return None;
-        }
-        let raw = reader.ReadByte().ok()?;
-        (raw <= 100).then_some(raw)
     }
 
     /// 从 PnP 实例 ID 里提取设备 MAC（u64，蓝牙地址的整数形式）。
@@ -666,7 +622,6 @@ mod win {
         info: &DeviceInformation,
         started: Instant,
         battery_index: &std::collections::HashMap<u64, (u8, String)>,
-        used_batteries: &mut std::collections::HashSet<u64>,
     ) -> Option<BtDevice> {
         let raw_id = info.Id().ok()?.to_string();
         let mut name = info.Name().map(|n| n.to_string()).unwrap_or_default();
@@ -683,10 +638,25 @@ mod win {
             .ok()
             .and_then(|op| op.get().ok());
 
-        // 经典侧的 ClassOfDevice 只有 `BluetoothDevice` 给得到。
-        let classic = BluetoothDevice::FromIdAsync(&HSTRING::from(raw_id.as_str()))
+        // ---- 经典侧句柄 ----
+        //
+        // 按 ID 打开（这一步的结果决定 `kind`：经典 / BLE / 双模）。
+        let classic_by_id = BluetoothDevice::FromIdAsync(&HSTRING::from(raw_id.as_str()))
             .ok()
             .and_then(|op| op.get().ok());
+
+        // `classic` 专供 ClassOfDevice 与连接状态用：ID 打不开时（纯 BLE 节点
+        // 的 ID 形如 `BTHLE\DEV_<mac>\...`，拿它开经典设备会 E_INVALIDARG），
+        // **用 MAC 在经典侧再开一次**。同一台设备在经典侧同样有配对记录，
+        // 能拿到 ClassOfDevice —— 状态栏的键盘/鼠标/耳机图标全靠它。
+        // 少了这个兜底，所有 BLE 键鼠都会退化成"通用蓝牙"图标。
+        let classic = classic_by_id.clone().or_else(|| {
+            extract_mac(&raw_id).and_then(|mac| {
+                BluetoothDevice::FromBluetoothAddressAsync(mac)
+                    .ok()
+                    .and_then(|op| op.get().ok())
+            })
+        });
 
         // 名字兜底：`DeviceInformation::Name()` 在部分设备上是空的，
         // 但 `BluetoothDevice::Name()` / `BluetoothLEDevice::Name()` 有。
@@ -703,7 +673,7 @@ mod win {
                 .unwrap_or_default();
         }
 
-        let kind = match (&ble, &classic) {
+        let kind = match (&ble, &classic_by_id) {
             (Some(_), Some(_)) => DeviceKind::Dual,
             (Some(_), None) => DeviceKind::Ble,
             (None, Some(_)) => DeviceKind::Classic,
@@ -754,21 +724,23 @@ mod win {
             .map(|major| major == BluetoothMajorClass::AudioVideo)
             .unwrap_or(false);
 
-        // ---- 电量：四条通道依次尝试，先到先得 ----
+        // 用途类别（状态栏选图标）。与 is_audio 同源但更细：
+        // is_audio 只回答"能不能采信系统兜底电量"，这里回答"画哪个图标"。
+        let category = classify_category(classic.as_ref());
+
+        // ---- 电量：三条通道依次尝试，先到先得 ----
         //
-        // 顺序按"可信度 + 命中率"排：
-        //
-        //   ① **BAS 服务设备索引**（`battery_index`）—— 主力通路。
-        //      走的是 Windows 已建好的电池服务子设备，对着我们已经
-        //      验证过的设备集合命中率最高（鼠标/键盘/耳机都能覆盖）。
-        //   ② 直接读该设备的 GATT BAS —— 对没建服务子设备的设备兜底。
-        //   ③ 经典侧系统元数据（注册表 / PnP 属性）—— 覆盖无 BLE 的老设备。
-        //   ④ PnP 音频兜底 —— 仅音频类可信（见 is_audio）。
+        //   ① **设备属性索引**（`battery_index`）—— 主力通路。
+        //      索引来自全量扫描 `DEVPKEY_Bluetooth_Battery`（按 MAC 归一），
+        //      同时覆盖 BLE 外设与经典设备，**包括电量挂在 HFP 功能子节点
+        //      上的耳机** —— 这正是本轮修掉的关键缺失（Windows 设置页显示
+        //      的耳机电量读的就是这个属性）。
+        //   ② 直连 GATT BAS —— 索引没命中时的兜底（慢，且对 HID 常失败）。
+        //   ③ 经典侧系统元数据（BTHPORT 注册表启发式）—— 覆盖更老的设备。
         let mut battery = None;
         let mut source = super::super::BatterySource::None;
 
-        // ① 查索引。MAC 从两个来源取：经典侧给 `BluetoothAddress()`，
-        //    BLE 侧从实例 ID 里解析。
+        // MAC：经典侧直接给，BLE 侧从实例 ID 里解析。
         let address = classic
             .as_ref()
             .and_then(|d| d.BluetoothAddress().ok())
@@ -777,8 +749,7 @@ mod win {
         if address != 0 {
             if let Some((level, _name)) = battery_index.get(&address) {
                 battery = Some(*level);
-                source = super::super::BatterySource::BleBas;
-                used_batteries.insert(address);
+                source = super::super::BatterySource::SystemPnp;
             }
         }
 
@@ -802,13 +773,6 @@ mod win {
             }
         }
 
-        if battery.is_none() && is_audio {
-            if let Some(level) = read_pnp_battery(info) {
-                battery = Some(level);
-                source = super::super::BatterySource::SystemPnp;
-            }
-        }
-
         Some(BtDevice {
             id: raw_id,
             name: if name.is_empty() {
@@ -817,10 +781,48 @@ mod win {
                 name
             },
             kind,
+            category,
             battery_percent: battery,
             battery_source: source,
             is_audio,
         })
+    }
+
+    /// 从经典侧的 ClassOfDevice 推设备用途类别（状态栏图标用）。
+    ///
+    /// ★ CoD 规范里 Peripheral 大类的 minor 位是：
+    ///
+    /// ```text
+    ///   0x10  Keyboard
+    ///   0x20  Pointing device（鼠标 / 触摸板）
+    ///   0x30  Keyboard + Pointing（键鼠一体，按键盘显示）
+    /// ```
+    ///
+    ///   这里用**裸值**比较而不是枚举名：WinRT 的 `BluetoothMinorClass`
+    ///   没有导出 Keyboard / PointingDevice 这两个常量（只导出了
+    ///   Joystick / Gamepad / RemoteControl 等），写数字反而更准确。
+    pub(super) fn classify_category(
+        classic: Option<&BluetoothDevice>,
+    ) -> super::super::DeviceCategory {
+        use super::super::DeviceCategory;
+
+        let Some(cod) = classic.and_then(|d| d.ClassOfDevice().ok()) else {
+            return DeviceCategory::Other;
+        };
+        let major = cod.MajorClass().map(|m| m.0).unwrap_or(-1);
+        let minor = cod.MinorClass().map(|m| m.0).unwrap_or(0);
+
+        match major {
+            // AudioVideo = 4 → 耳机 / 音箱 / 车机
+            4 => DeviceCategory::Audio,
+            // Peripheral = 5 → 键鼠等输入设备
+            5 => match minor {
+                0x10 | 0x30 => DeviceCategory::Keyboard,
+                0x20 => DeviceCategory::Mouse,
+                _ => DeviceCategory::Other,
+            },
+            _ => DeviceCategory::Other,
+        }
     }
 
     /// 走 BLE 标准电池服务读电量。
@@ -1131,7 +1133,7 @@ mod win {
                 continue;
             }
             // 经典补设备走空索引 —— 它们在主循环里已经查过候选电量了。
-            if let Some(device) = read_one(&info, started, &Default::default(), &mut Default::default())
+            if let Some(device) = read_one(&info, started, &Default::default())
             {
                 extra.push(device);
             }
@@ -1208,13 +1210,14 @@ mod win {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::insight::{BatterySource, DeviceKind};
+    use crate::insight::{BatterySource, DeviceCategory, DeviceKind};
 
     fn sample(name: &str, battery: Option<u8>) -> BtDevice {
         BtDevice {
             id: format!("id:{name}"),
             name: name.into(),
             kind: DeviceKind::Classic,
+            category: DeviceCategory::Other,
             battery_percent: battery,
             battery_source: BatterySource::ClassicSdp,
             is_audio: true,
@@ -1356,6 +1359,7 @@ mod tests {
                 id: format!("battery-node:{mac}"),
                 name: name.to_string(),
                 kind: DeviceKind::Ble,
+                category: DeviceCategory::Other,
                 battery_percent: Some(level),
                 battery_source: BatterySource::BleBas,
                 is_audio: false,

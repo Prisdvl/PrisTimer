@@ -73,6 +73,17 @@ windows = { version = "0.61", features = [
     "Win32_System_Com",
     "Win32_System_Registry",
 ] }
+# ★ 集合接口（IIterable / IVector）的实体在这里。
+#
+# windows 0.61 把 Foundation::Collections 的集合类型拆到了独立 crate
+# `windows-collections`，而 windows crate **没有** re-export 它 ——
+# 所以要用 `DeviceInformation::FindAllAsync…AndAdditionalProperties`
+# （它的 additionalproperties 形参是 `IIterable<HSTRING>`）就必须显式声明。
+#
+# 又是零下载：它本来就是 windows 0.61 的传递依赖。
+# 用途：电量索引需要显式请求 `DEVPKEY_Bluetooth_Battery` 属性
+# （默认属性集里没有它，不请求就永远读到 None）。
+windows-collections = "0.2"
 # ★ 桌面外壳「去浏览器化」专用。
 #
 # Tauri 自己就用 webview2-com 0.38（见 tauri 的 Cargo.toml），所以这里

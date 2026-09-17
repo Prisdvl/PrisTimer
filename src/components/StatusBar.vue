@@ -13,7 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import { computed, ref } from "vue";
-import { useInsight, batteryText, kindLabel, ageLabel, isBtOk } from "../composables/useInsight";
+import { useInsight, batteryText, shortName, ageLabel, isBtOk } from "../composables/useInsight";
 import { toast } from "../composables/useToast";
 import { insightApi } from "../api";
 
@@ -29,7 +29,28 @@ const {
 } = useInsight();
 
 // ---- 蓝牙分组 ----
-const devices = computed(() => (isBtOk(snapshot.value.bluetooth) ? snapshot.value.bluetooth.devices : []));
+
+/** 类别排序权重：音频设备排最前（耳机剩多少电是用户最关心的信息）。 */
+const CATEGORY_ORDER: Record<string, number> = { audio: 0, keyboard: 1, mouse: 2, other: 3 };
+
+const devices = computed(() => {
+  if (!isBtOk(snapshot.value.bluetooth)) return [];
+  // ★ 排序在**拷贝**上做：`devices` 是快照里的数组，原地 sort 会改到
+  //   useInsight 的单例状态（同一份数据托盘浮窗也在用）。
+  return [...snapshot.value.bluetooth.devices].sort((a, b) => {
+    const byCategory = (CATEGORY_ORDER[a.category] ?? 9) - (CATEGORY_ORDER[b.category] ?? 9);
+    // 同类里电量低的排前 —— 快没电的那台最该被看见；未知电量排最后。
+    return byCategory !== 0
+      ? byCategory
+      : (a.batteryPercent ?? 101) - (b.batteryPercent ?? 101);
+  });
+});
+
+/**
+ * 设备名缩写见 useInsight 的 `shortName` —— 浮窗也用同一套规则，
+ * 两处各写一份迟早会不一致（同一台设备在两个界面上叫不同名字很怪）。
+ */
+
 const btText = computed(() => deviceLine(snapshot.value.bluetooth));
 const btClass = computed(() => {
   switch (snapshot.value.bluetooth.status) {
@@ -64,6 +85,27 @@ const quotaClass = computed(() => {
 const quotaWindows = computed(() =>
   snapshot.value.quota.status === "ok" ? snapshot.value.quota.windows ?? [] : [],
 );
+
+/**
+ * 状态栏**只显示"本月"**这一档。
+ *
+ * 用户的判断：三个窗口同时铺在状态栏里太占地方，而"本月还剩多少"
+ * 是唯一需要随时瞄一眼的量 —— 滚动/本周的细节放进点击后的详情浮层。
+ * 找不到"本月"（非 opencode Go 的接口）就退回最后一档，再不然交给
+ * 单值文案。
+ */
+const monthWindow = computed(() => {
+  const list = quotaWindows.value;
+  if (!list.length) return null;
+  return list.find((w) => w.label.includes("本月")) ?? list[list.length - 1];
+});
+
+/** 额度详情浮层（点击状态栏的额度胶囊展开）。 */
+const detailOpen = ref(false);
+
+/** 本月额度的紧张程度，用于标黄/标红。 */
+const monthLow = computed(() => (monthWindow.value?.remainingPercent ?? 100) < 20);
+
 
 /** 窗口剩余百分比的整数显示。 */
 function pct(value: number): string {
@@ -106,6 +148,8 @@ let echoedEndpoint = "";
 /** 打开弹层时回显当前配置（Key 打码，只让用户确认"是哪一个"）。 */
 async function openConfig(): Promise<void> {
   configOpen.value = true;
+  // 两个浮层互斥：配置面板与额度详情不叠在一起。
+  detailOpen.value = false;
   saveError.value = null;
   try {
     const view = await insightApi.quotaConfigGet();
@@ -205,13 +249,42 @@ const btTitle = computed(() => {
       <svg class="g-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="m7 7 10 10-5 5V2l5 5L7 17" />
       </svg>
-      <!-- 状态文案 + 多设备罗列：每台设备一个小胶囊 -->
-      <span class="summary">{{ btText }}</span>
+      <!-- 无设备时给一句话；有设备时整行交给紧凑胶囊，不重复罗列 -->
+      <span v-if="!devices.length" class="summary">{{ btText }}</span>
       <span v-if="devices.length" class="devices">
-        <span v-for="dev in devices" :key="dev.id" class="chip" :title="`${dev.name} · ${kindLabel(dev.kind)}`">
-          {{ dev.name }}
-          <i class="kind">{{ kindLabel(dev.kind) }}</i>
-          <i class="bat" :class="{ unknown: dev.batteryPercent === null }">
+        <span
+          v-for="dev in devices"
+          :key="dev.id"
+          class="chip"
+          :title="`${dev.name}${dev.batteryPercent === null ? ' · 电量未知' : ` · ${dev.batteryPercent}%`}`"
+        >
+          <!-- 类型图标：内联 SVG，颜色跟随主题（audio / keyboard / mouse / 通用蓝牙） -->
+          <svg class="d-icon" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <template v-if="dev.category === 'audio'">
+              <path d="M3 14h3a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" />
+              <path d="M21 14h-3a1 1 0 0 0-1 1v3a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1z" />
+              <path d="M3 14v-2a9 9 0 0 1 18 0v2" />
+            </template>
+            <template v-else-if="dev.category === 'keyboard'">
+              <rect x="2" y="6" width="20" height="12" rx="2" />
+              <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10" />
+            </template>
+            <template v-else-if="dev.category === 'mouse'">
+              <rect x="7" y="2" width="10" height="20" rx="5" />
+              <path d="M12 6v4" />
+            </template>
+            <template v-else>
+              <path d="m7 7 10 10-5 5V2l5 5L7 17" />
+            </template>
+          </svg>
+          <span class="d-name">{{ shortName(dev.name) }}</span>
+          <i
+            class="bat"
+            :class="{
+              unknown: dev.batteryPercent === null,
+              low: (dev.batteryPercent ?? 100) < 20,
+            }"
+          >
             {{ batteryText(dev.batteryPercent) }}
           </i>
         </span>
@@ -232,22 +305,26 @@ const btTitle = computed(() => {
         <rect width="20" height="14" x="2" y="5" rx="2" />
         <path d="M2 10h20" />
       </svg>
-      <!-- 单值接口显示一句话；多窗口时下面每档一个胶囊，不重复罗列 -->
-      <span v-if="!quotaWindows.length" class="summary">{{ quotaText }}</span>
-      <!-- 多窗口：每档一个小胶囊（滚动 / 本周 / 本月），悬停看重置时间 -->
-      <span v-if="quotaWindows.length" class="devices">
-        <span
-          v-for="win in quotaWindows"
-          :key="win.label"
-          class="chip"
-          :title="`${win.label}窗口剩余 ${pct(win.remainingPercent)}，${resetText(win.resetsAt)}`"
+      <!-- 单值接口（非 opencode Go）显示一句话；多窗口只露"本月"，点击看全部 -->
+      <span v-if="!monthWindow" class="summary">{{ quotaText }}</span>
+      <button
+        v-if="monthWindow"
+        class="chip chip-btn"
+        :class="{ open: detailOpen }"
+        :title="`本月额度剩余 ${pct(monthWindow.remainingPercent)}，${resetText(monthWindow.resetsAt)} —— 点击查看全部窗口`"
+        @click.stop="detailOpen = !detailOpen"
+      >
+        <span class="d-name">本月</span>
+        <i
+          class="bat"
+          :class="{ unknown: monthWindow.remainingPercent <= 0, low: monthLow }"
         >
-          {{ win.label }}
-          <i class="bat" :class="{ unknown: win.remainingPercent <= 0, low: win.remainingPercent < 20 }">
-            {{ pct(win.remainingPercent) }}
-          </i>
-        </span>
-      </span>
+          {{ pct(monthWindow.remainingPercent) }}
+        </i>
+        <svg class="caret" viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 4.5 6 7.5 9 4.5" />
+        </svg>
+      </button>
       <button class="mini-btn" title="立即刷新额度" @click="refreshQuota">
         <svg viewBox="0 0 14 14" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12.5 7a5.5 5.5 0 1 1-1.6-3.9" />
@@ -279,6 +356,26 @@ const btTitle = computed(() => {
     <!-- 刷新节流提示 -->
     <Transition name="fade">
       <span v-if="lastBtThrottled" class="hint">刚扫过，请稍候再刷新</span>
+    </Transition>
+
+    <!-- ── 额度详情浮层：点"本月"胶囊展开（三窗口 + 进度条 + 重置时间） ── -->
+    <Transition name="pop">
+      <div v-if="detailOpen" class="quota-pop" @click.stop>
+        <p class="cfg-title">额度详情</p>
+        <div v-for="win in quotaWindows" :key="win.label" class="qp-row">
+          <span class="qp-label">{{ win.label }}</span>
+          <span class="qp-track">
+            <i
+              class="qp-fill"
+              :class="{ low: win.remainingPercent < 20, empty: win.remainingPercent <= 0 }"
+              :style="{ width: `${Math.max(0, Math.min(100, win.remainingPercent))}%` }"
+            />
+          </span>
+          <span class="qp-pct">{{ pct(win.remainingPercent) }}</span>
+          <span class="qp-reset">{{ resetText(win.resetsAt) }}</span>
+        </div>
+        <p class="cfg-hint">更新于 {{ quotaAge }}</p>
+      </div>
     </Transition>
 
     <!-- ── 额度配置弹层 ─────────────────────────────────────── -->
@@ -433,6 +530,18 @@ const btTitle = computed(() => {
   color: #e8b64c;
 }
 
+/* 类型图标 + 缩短后的设备名（全名保留在 title 里） */
+.chip .d-icon {
+  flex: none;
+  color: var(--ink-dim);
+}
+.chip .d-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 92px;
+}
+
 /* ------------------------------------------------------- 小按钮组 */
 .mini-btn {
   display: grid;
@@ -477,6 +586,86 @@ const btTitle = computed(() => {
   font-size: 0.68rem;
   color: var(--ink-dim);
   pointer-events: none;
+}
+
+/* ------------------------------------------------------- 额度详情浮层 */
+.quota-pop {
+  position: absolute;
+  right: 74px;
+  bottom: 2.1rem;
+  z-index: 6;
+  width: 272px;
+  padding: 0.7rem 0.8rem 0.6rem;
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  background: var(--glass-bg-deep);
+  backdrop-filter: var(--glass-blur-lg);
+  box-shadow: var(--glass-edge), 0 16px 40px rgb(0 0 0 / 0.38);
+  color: var(--ink-soft);
+}
+.qp-row {
+  display: grid;
+  grid-template-columns: 2.4rem 1fr 2.4rem auto;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.42rem;
+  font-size: 0.7rem;
+}
+.qp-label {
+  color: var(--ink-dim);
+}
+/* 进度条底槽用**主题相对**的叠层（color-mix(--ink)）：
+   写死 rgb(255 255 255 / x) 在浅色主题下会整条隐形。 */
+.qp-track {
+  position: relative;
+  height: 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 14%, transparent);
+  overflow: hidden;
+}
+.qp-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+  background: var(--accent);
+  /* 宽度做成动画：刷新后能直观看出"少了多少" */
+  transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.qp-fill.low {
+  background: #e8b64c;
+}
+.qp-fill.empty {
+  background: color-mix(in srgb, var(--ink) 30%, transparent);
+}
+.qp-pct {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.qp-reset {
+  color: var(--ink-faint);
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------- 可点击胶囊（本月额度） */
+.chip-btn {
+  font: inherit;
+  cursor: pointer;
+  transition:
+    border-color var(--t-base) ease,
+    background var(--t-base) ease;
+}
+.chip-btn:hover,
+.chip-btn.open {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--glass-bg-strong);
+}
+.chip-btn .caret {
+  color: var(--ink-faint);
+  transition: transform var(--t-base) ease;
+}
+.chip-btn.open .caret {
+  transform: rotate(180deg);
 }
 
 /* ------------------------------------------------------- 配置弹层 */
